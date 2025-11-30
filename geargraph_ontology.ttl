@@ -1,0 +1,1038 @@
+# GearGraph Ontology
+@prefix : <http://geargraph.com/ontology#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix schema1: <http://schema.org/> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+:DimensionSpecification a owl:Class ;
+    rdfs:label "Dimension Specification" ;
+    rdfs:comment "Physical dimensions of gear" ;
+    rdfs:subClassOf :Specification ;
+    skos:definition "Physical size specifications of gear" .
+
+:GearCompatibility a owl:Class ;
+    rdfs:label "Gear Compatibility" ;
+    rdfs:comment "COMPATIBILITY_ENTITY: Gear interaction knowledge",
+        "Information about gear working together" ;
+    skos:definition "Relationship describing how well gear items work together" .
+
+:HikingPrinciple a owl:Class ;
+    rdfs:label "Hiking Principle" ;
+    rdfs:comment "General principle or best practice",
+        "PRINCIPLE_ENTITY: Core wisdom for gear selection" ;
+    skos:definition "Fundamental principle guiding outdoor gear decisions" .
+
+:ManufacturerData a owl:Class ;
+    rdfs:label "Manufacturer Data" ;
+    rdfs:comment "Data supplied by manufacturers",
+        "MANUFACTURER_ENTITY: Official product data" ;
+    rdfs:subClassOf :DataSource ;
+    skos:definition "Official information from gear manufacturers" .
+
+:MaterialSpecification a owl:Class ;
+    rdfs:label "Material Specification" ;
+    rdfs:comment "Material composition of gear" ;
+    rdfs:subClassOf :Specification ;
+    skos:definition "Materials used in gear construction" .
+
+:PerformanceContext a owl:Class ;
+    rdfs:label "Performance Context" ;
+    rdfs:comment "CONTEXT_ENTITY: Performance influencing factors",
+        "Context affecting gear performance" ;
+    skos:definition "Situational factors that influence how gear performs" .
+
+:UserContributedData a owl:Class ;
+    rdfs:label "User Contributed Data" ;
+    rdfs:comment "Data contributed by users",
+        "USER_ENTITY: Community-contributed data" ;
+    rdfs:subClassOf :DataSource ;
+    skos:definition "Information provided by community users" .
+
+:VendorData a owl:Class ;
+    rdfs:label "Vendor Data" ;
+    rdfs:comment "Data supplied by vendors",
+        "VENDOR_ENTITY: Retailer-supplied data" ;
+    rdfs:subClassOf :DataSource ;
+    skos:definition "Information provided by gear retailers" .
+
+:WeatherCondition a owl:Class ;
+    rdfs:label "Weather Condition" ;
+    rdfs:comment "Weather conditions suitable for gear use" ;
+    rdfs:subClassOf :EnvironmentalConstraint ;
+    skos:definition "Weather scenarios where gear performs optimally" .
+
+:accuracyScore a owl:DatatypeProperty ;
+    rdfs:label "accuracy score" ;
+    rdfs:comment "Assessed accuracy of data (0.0-1.0)" ;
+    rdfs:domain :DataQuality ;
+    rdfs:range xsd:decimal .
+
+:appliesInScenario a owl:ObjectProperty ;
+    rdfs:label "applies in scenario" ;
+    rdfs:comment "KEY_RELATIONSHIP: Recommendation context",
+        "Scenario where recommendation applies" ;
+    rdfs:domain :GearRecommendation ;
+    rdfs:range :UsageScenario .
+
+:attributionRequired a owl:DatatypeProperty ;
+    rdfs:label "attribution required" ;
+    rdfs:comment "Whether attribution is required" ;
+    rdfs:domain :Attribution ;
+    rdfs:range xsd:boolean .
+
+:attributionText a owl:DatatypeProperty ;
+    rdfs:label "attribution text" ;
+    rdfs:comment "Required attribution text" ;
+    rdfs:domain :Attribution ;
+    rdfs:range xsd:string .
+
+:awardName a owl:DatatypeProperty ;
+    rdfs:label "award name" ;
+    rdfs:comment "Name of the award" ;
+    rdfs:domain :ReviewAward ;
+    rdfs:range xsd:string .
+
+:awardType a owl:DatatypeProperty ;
+    rdfs:label "award type" ;
+    rdfs:comment "Type of award (editors-pick, best-in-class, top-pick)" ;
+    rdfs:domain :ReviewAward ;
+    rdfs:range xsd:string .
+
+:awardYear a owl:DatatypeProperty ;
+    rdfs:label "award year" ;
+    rdfs:comment "Year award was given" ;
+    rdfs:domain :ReviewAward ;
+    rdfs:range xsd:gYear .
+
+:basedOnCriterion a owl:ObjectProperty ;
+    rdfs:label "based on criterion" ;
+    rdfs:comment "Decision criterion that influences choice",
+        "KEY_RELATIONSHIP: Decision logic foundation" ;
+    rdfs:domain :GearDecision ;
+    rdfs:range :DecisionCriterion .
+
+:beginnerIssue a owl:DatatypeProperty ;
+    rdfs:label "beginner issue" ;
+    rdfs:comment "Issue commonly experienced by beginners" ;
+    rdfs:domain :FeedbackPattern ;
+    rdfs:range xsd:string .
+
+:belongsToCategory a owl:ObjectProperty ;
+    rdfs:label "belongs to category" ;
+    rdfs:comment "High-level category of gear",
+        "KEY_RELATIONSHIP: Essential classification relationship" ;
+    rdfs:domain :GearItem ;
+    rdfs:range :GearCategory ;
+    rdfs:subPropertyOf schema1:category .
+
+:belongsToSubcategory a owl:ObjectProperty ;
+    rdfs:label "belongs to subcategory" ;
+    rdfs:comment "Mid-level category of gear" ;
+    rdfs:domain :GearItem ;
+    rdfs:range :GearSubcategory .
+
+:bestRatingValue a owl:DatatypeProperty ;
+    rdfs:label "best rating value" ;
+    rdfs:comment "Highest possible rating value" ;
+    rdfs:domain :GearRating ;
+    rdfs:range xsd:decimal ;
+    rdfs:subPropertyOf schema1:bestRating .
+
+:betterThan a owl:ObjectProperty ;
+    rdfs:label "better than" ;
+    rdfs:comment "Gear that outperforms another in specific context",
+        "KEY_RELATIONSHIP: Performance comparison" ;
+    rdfs:domain :GearItem ;
+    rdfs:range :GearItem .
+
+:commonComplaint a owl:DatatypeProperty ;
+    rdfs:label "common complaint" ;
+    rdfs:comment "Common complaint about gear" ;
+    rdfs:domain :FeedbackPattern ;
+    rdfs:range xsd:string .
+
+:commonPraise a owl:DatatypeProperty ;
+    rdfs:label "common praise" ;
+    rdfs:comment "Commonly praised aspect" ;
+    rdfs:domain :FeedbackPattern ;
+    rdfs:range xsd:string .
+
+:compatibleWith a owl:ObjectProperty ;
+    rdfs:label "compatible with" ;
+    rdfs:comment "Gear that works well together",
+        "KEY_RELATIONSHIP: Gear synergy" ;
+    rdfs:domain :GearItem ;
+    rdfs:range :GearItem ;
+    owl:propertyType owl:SymmetricProperty .
+
+:completenessScore a owl:DatatypeProperty ;
+    rdfs:label "completeness score" ;
+    rdfs:comment "How complete the data is (0.0-1.0)" ;
+    rdfs:domain :DataQuality ;
+    rdfs:range xsd:decimal .
+
+:confidenceLevel a owl:DatatypeProperty ;
+    rdfs:label "confidence level" ;
+    rdfs:comment "Confidence in data accuracy (0.0-1.0)" ;
+    rdfs:domain :DataQuality ;
+    rdfs:range xsd:decimal .
+
+:copyrightNotice a owl:DatatypeProperty ;
+    rdfs:label "copyright notice" ;
+    rdfs:comment "Copyright notice for data" ;
+    rdfs:domain :DataSource ;
+    rdfs:range xsd:string .
+
+:credibilityRating a owl:DatatypeProperty ;
+    rdfs:label "credibility rating" ;
+    rdfs:comment "Credibility assessment of publication" ;
+    rdfs:domain :ReviewPublication ;
+    rdfs:range xsd:string .
+
+:criterionName a owl:DatatypeProperty ;
+    rdfs:label "criterion name" ;
+    rdfs:comment "Name of the decision criterion" ;
+    rdfs:domain :DecisionCriterion ;
+    rdfs:range xsd:string .
+
+:criterionType a owl:DatatypeProperty ;
+    rdfs:label "criterion type" ;
+    rdfs:comment "Type of criterion (weight, durability, cost, etc.)" ;
+    rdfs:domain :DecisionCriterion ;
+    rdfs:range xsd:string .
+
+:criterionWeight a owl:DatatypeProperty ;
+    rdfs:label "criterion weight" ;
+    rdfs:comment "Importance weight of criterion (0.0-1.0)" ;
+    rdfs:domain :DecisionCriterion ;
+    rdfs:range xsd:decimal .
+
+:dataCollectionDate a owl:DatatypeProperty ;
+    rdfs:label "data collection date" ;
+    rdfs:comment "When data was collected" ;
+    rdfs:domain :DataProvenance ;
+    rdfs:range xsd:dateTime ;
+    rdfs:subPropertyOf prov:generatedAtTime .
+
+:dataExpiration a owl:DatatypeProperty ;
+    rdfs:label "data expiration" ;
+    rdfs:comment "When data expires or needs refresh" ;
+    rdfs:domain :DataProvenance ;
+    rdfs:range xsd:dateTime .
+
+:dataLastVerified a owl:DatatypeProperty ;
+    rdfs:label "data last verified" ;
+    rdfs:comment "When data was last verified" ;
+    rdfs:domain :DataProvenance ;
+    rdfs:range xsd:dateTime .
+
+:dataLicense a owl:DatatypeProperty ;
+    rdfs:label "data license" ;
+    rdfs:comment "License under which data is available" ;
+    rdfs:domain :DataSource ;
+    rdfs:range xsd:string .
+
+:dataOrigin a owl:DatatypeProperty ;
+    rdfs:label "data origin" ;
+    rdfs:comment "Type of data origin" ;
+    rdfs:domain :DataProvenance ;
+    rdfs:range xsd:string .
+
+:difficultyLevel a owl:DatatypeProperty ;
+    rdfs:label "difficulty level" ;
+    rdfs:comment "Difficulty level of scenario (beginner, intermediate, expert)" ;
+    rdfs:domain :UsageScenario ;
+    rdfs:range xsd:string .
+
+:durabilityScore a owl:DatatypeProperty ;
+    rdfs:label "durability score" ;
+    rdfs:comment "Durability assessment" ;
+    rdfs:domain :GearReview ;
+    rdfs:range xsd:decimal .
+
+:duration a owl:DatatypeProperty ;
+    rdfs:label "duration" ;
+    rdfs:comment "Typical duration of scenario" ;
+    rdfs:domain :UsageScenario ;
+    rdfs:range xsd:string .
+
+:expertModification a owl:DatatypeProperty ;
+    rdfs:label "expert modification" ;
+    rdfs:comment "Modification commonly made by experts" ;
+    rdfs:domain :FeedbackPattern ;
+    rdfs:range xsd:string .
+
+:expertiseArea a owl:DatatypeProperty ;
+    rdfs:label "expertise area" ;
+    rdfs:comment "Area of expertise for publication" ;
+    rdfs:domain :ReviewPublication ;
+    rdfs:range xsd:string .
+
+:feedbackFrequency a owl:DatatypeProperty ;
+    rdfs:label "feedback frequency" ;
+    rdfs:comment "How often this feedback occurs" ;
+    rdfs:domain :FeedbackPattern ;
+    rdfs:range xsd:decimal .
+
+:freshnessScore a owl:DatatypeProperty ;
+    rdfs:label "freshness score" ;
+    rdfs:comment "How fresh/current the data is (0.0-1.0)" ;
+    rdfs:domain :DataQuality ;
+    rdfs:range xsd:decimal .
+
+:gearId a owl:DatatypeProperty ;
+    rdfs:label "gear ID" ;
+    rdfs:comment "Unique identifier for gear item" ;
+    rdfs:domain :GearItem ;
+    rdfs:range xsd:string ;
+    rdfs:subPropertyOf schema1:productID .
+
+:groupSize a owl:DatatypeProperty ;
+    rdfs:label "group size" ;
+    rdfs:comment "Typical group size for scenario" ;
+    rdfs:domain :UsageScenario ;
+    rdfs:range xsd:string .
+
+:hasAlternative a owl:ObjectProperty ;
+    rdfs:label "has alternative" ;
+    rdfs:comment "Alternative gear option",
+        "KEY_RELATIONSHIP: Backup options" ;
+    rdfs:domain :GearItem ;
+    rdfs:range :AlternativeGear .
+
+:hasCommonMistake a owl:ObjectProperty ;
+    rdfs:label "has common mistake" ;
+    rdfs:comment "Common error associated with gear",
+        "KEY_RELATIONSHIP: Learning from mistakes" ;
+    rdfs:domain :GearItem ;
+    rdfs:range :CommonMistake .
+
+:hasDataSource a owl:ObjectProperty ;
+    rdfs:label "has data source" ;
+    rdfs:comment "KEY_RELATIONSHIP: Direct source attribution",
+        "Source of this information" ;
+    rdfs:domain owl:Thing ;
+    rdfs:range :DataSource ;
+    rdfs:subPropertyOf prov:wasDerivedFrom .
+
+:hasDecision a owl:ObjectProperty ;
+    rdfs:label "has decision" ;
+    rdfs:comment "KEY_RELATIONSHIP: Links gear to decision logic",
+        "Links gear to decision points" ;
+    rdfs:domain :GearItem ;
+    rdfs:range :GearDecision .
+
+:hasEnvironmentalConstraint a owl:ObjectProperty ;
+    rdfs:label "has environmental constraint" ;
+    rdfs:comment "Environmental limitation or requirement" ;
+    rdfs:domain :GearItem ;
+    rdfs:range :EnvironmentalConstraint .
+
+:hasFeedbackPattern a owl:ObjectProperty ;
+    rdfs:label "has feedback pattern" ;
+    rdfs:comment "Common pattern in feedback",
+        "KEY_RELATIONSHIP: Recurring user experiences" ;
+    rdfs:domain :UserFeedback ;
+    rdfs:range :FeedbackPattern .
+
+:hasInsight a owl:ObjectProperty ;
+    rdfs:label "has insight" ;
+    rdfs:comment "Associated gear insight",
+        "KEY_RELATIONSHIP: Gear-specific knowledge" ;
+    rdfs:domain :GearItem ;
+    rdfs:range :GearInsight .
+
+:hasParentCategory a owl:ObjectProperty ;
+    rdfs:label "has parent category" ;
+    rdfs:comment "Parent category relationship" ;
+    rdfs:domain :GearSubcategory ;
+    rdfs:range :GearCategory ;
+    rdfs:subPropertyOf skos:broader .
+
+:hasParentSubcategory a owl:ObjectProperty ;
+    rdfs:label "has parent subcategory" ;
+    rdfs:comment "Parent subcategory relationship" ;
+    rdfs:domain :ProductType ;
+    rdfs:range :GearSubcategory ;
+    rdfs:subPropertyOf skos:broader .
+
+:hasProductType a owl:ObjectProperty ;
+    rdfs:label "has product type" ;
+    rdfs:comment "Specific product type classification" ;
+    rdfs:domain :GearItem ;
+    rdfs:range :ProductType .
+
+:hasProvenance a owl:ObjectProperty ;
+    rdfs:label "has provenance" ;
+    rdfs:comment "KEY_RELATIONSHIP: Data lineage connection",
+        "Provenance information for this data" ;
+    rdfs:domain owl:Thing ;
+    rdfs:range :DataProvenance ;
+    rdfs:subPropertyOf prov:wasGeneratedBy .
+
+:hasQualityAssessment a owl:ObjectProperty ;
+    rdfs:label "has quality assessment" ;
+    rdfs:comment "KEY_RELATIONSHIP: Quality evaluation",
+        "Quality assessment of data" ;
+    rdfs:domain :DataSource ;
+    rdfs:range :DataQuality .
+
+:hasRating a owl:ObjectProperty ;
+    rdfs:label "has rating" ;
+    rdfs:comment "KEY_RELATIONSHIP: Review ratings",
+        "Rating given in review" ;
+    rdfs:domain :GearReview ;
+    rdfs:range :GearRating ;
+    rdfs:subPropertyOf schema1:reviewRating .
+
+:hasReview a owl:ObjectProperty ;
+    rdfs:label "has review" ;
+    rdfs:comment "KEY_RELATIONSHIP: Gear-review connection",
+        "Review of this gear item" ;
+    rdfs:domain :GearItem ;
+    rdfs:range :GearReview ;
+    rdfs:subPropertyOf schema1:review .
+
+:hasSafetyConsideration a owl:ObjectProperty ;
+    rdfs:label "has safety consideration" ;
+    rdfs:comment "KEY_RELATIONSHIP: Critical safety information",
+        "Safety aspect of gear use" ;
+    rdfs:domain :GearItem ;
+    rdfs:range :SafetyConsideration .
+
+:hasUsageTip a owl:ObjectProperty ;
+    rdfs:label "has usage tip" ;
+    rdfs:comment "KEY_RELATIONSHIP: Practical usage guidance",
+        "Practical usage advice" ;
+    rdfs:domain :GearItem ;
+    rdfs:range :UsageTip .
+
+:hasUserFeedback a owl:ObjectProperty ;
+    rdfs:label "has user feedback" ;
+    rdfs:comment "KEY_RELATIONSHIP: User experience data",
+        "User feedback about gear" ;
+    rdfs:domain :GearItem ;
+    rdfs:range :UserFeedback .
+
+:hasVerificationStatus a owl:ObjectProperty ;
+    rdfs:label "has verification status" ;
+    rdfs:comment "KEY_RELATIONSHIP: Verification tracking",
+        "Verification status of data" ;
+    rdfs:domain :DataSource ;
+    rdfs:range :VerificationStatus .
+
+:hasWeight a owl:ObjectProperty ;
+    rdfs:label "has weight" ;
+    rdfs:comment "Weight specification" ;
+    rdfs:domain :GearItem ;
+    rdfs:range :WeightSpecification ;
+    rdfs:subPropertyOf :hasSpecification .
+
+:incompatibleWith a owl:ObjectProperty ;
+    rdfs:label "incompatible with" ;
+    rdfs:comment "Gear that doesn't work well together",
+        "KEY_RELATIONSHIP: Gear conflicts" ;
+    rdfs:domain :GearItem ;
+    rdfs:range :GearItem ;
+    owl:propertyType owl:SymmetricProperty .
+
+:innovationScore a owl:DatatypeProperty ;
+    rdfs:label "innovation score" ;
+    rdfs:comment "Innovation rating" ;
+    rdfs:domain :GearReview ;
+    rdfs:range xsd:decimal .
+
+:insightText a owl:DatatypeProperty ;
+    rdfs:label "insight text" ;
+    rdfs:comment "Text describing the gear insight" ;
+    rdfs:domain :GearInsight ;
+    rdfs:range xsd:string .
+
+:isManufacturerSupplied a owl:DatatypeProperty ;
+    rdfs:label "is manufacturer supplied" ;
+    rdfs:comment "Whether data was manufacturer supplied" ;
+    rdfs:domain :DataProvenance ;
+    rdfs:range xsd:boolean .
+
+:isScrapedData a owl:DatatypeProperty ;
+    rdfs:label "is scraped data" ;
+    rdfs:comment "Whether data was scraped" ;
+    rdfs:domain :DataProvenance ;
+    rdfs:range xsd:boolean .
+
+:isUserContributed a owl:DatatypeProperty ;
+    rdfs:label "is user contributed" ;
+    rdfs:comment "Whether data was user contributed" ;
+    rdfs:domain :DataProvenance ;
+    rdfs:range xsd:boolean .
+
+:isVendorSupplied a owl:DatatypeProperty ;
+    rdfs:label "is vendor supplied" ;
+    rdfs:comment "Whether data was vendor supplied" ;
+    rdfs:domain :DataProvenance ;
+    rdfs:range xsd:boolean .
+
+:lastUpdateDate a owl:DatatypeProperty ;
+    rdfs:label "last update date" ;
+    rdfs:comment "When source was last updated" ;
+    rdfs:domain :DataSource ;
+    rdfs:range xsd:dateTime .
+
+:leadsToRecommendation a owl:ObjectProperty ;
+    rdfs:label "leads to recommendation" ;
+    rdfs:comment "KEY_RELATIONSHIP: Decision outcome",
+        "Recommendation resulting from decision" ;
+    rdfs:domain :GearDecision ;
+    rdfs:range :GearRecommendation .
+
+:manufacturedBy a owl:ObjectProperty ;
+    rdfs:label "manufactured by" ;
+    rdfs:comment "Brand that manufactures this gear",
+        "KEY_RELATIONSHIP: Critical brand-product connection" ;
+    rdfs:domain :GearItem ;
+    rdfs:range :OutdoorBrand ;
+    rdfs:subPropertyOf schema1:manufacturer .
+
+:mistakeConsequence a owl:DatatypeProperty ;
+    rdfs:label "mistake consequence" ;
+    rdfs:comment "Consequence of making this mistake" ;
+    rdfs:domain :CommonMistake ;
+    rdfs:range xsd:string .
+
+:mistakeDescription a owl:DatatypeProperty ;
+    rdfs:label "mistake description" ;
+    rdfs:comment "Description of the common mistake" ;
+    rdfs:domain :CommonMistake ;
+    rdfs:range xsd:string .
+
+:mistakePrevention a owl:DatatypeProperty ;
+    rdfs:label "mistake prevention" ;
+    rdfs:comment "How to prevent this mistake" ;
+    rdfs:domain :CommonMistake ;
+    rdfs:range xsd:string .
+
+:modelNumber a owl:DatatypeProperty ;
+    rdfs:label "model number" ;
+    rdfs:comment "Manufacturer model number" ;
+    rdfs:domain :GearItem ;
+    rdfs:range xsd:string ;
+    rdfs:subPropertyOf schema1:model .
+
+:operatingTemperatureMax a owl:DatatypeProperty ;
+    rdfs:label "maximum operating temperature" ;
+    rdfs:comment "Maximum temperature for gear use (Celsius)" ;
+    rdfs:domain :TemperatureRange ;
+    rdfs:range xsd:decimal .
+
+:operatingTemperatureMin a owl:DatatypeProperty ;
+    rdfs:label "minimum operating temperature" ;
+    rdfs:comment "Minimum temperature for gear use (Celsius)" ;
+    rdfs:domain :TemperatureRange ;
+    rdfs:range xsd:decimal .
+
+:performanceScore a owl:DatatypeProperty ;
+    rdfs:label "performance score" ;
+    rdfs:comment "Overall performance score from review" ;
+    rdfs:domain :GearReview ;
+    rdfs:range xsd:decimal .
+
+:productImage a owl:DatatypeProperty ;
+    rdfs:label "product image" ;
+    rdfs:comment "URL to product image" ;
+    rdfs:domain :GearItem ;
+    rdfs:range xsd:anyURI ;
+    rdfs:subPropertyOf schema1:image .
+
+:productURL a owl:DatatypeProperty ;
+    rdfs:label "product URL" ;
+    rdfs:comment "URL to product page" ;
+    rdfs:domain :GearItem ;
+    rdfs:range xsd:anyURI ;
+    rdfs:subPropertyOf schema1:url .
+
+:publicationName a owl:DatatypeProperty ;
+    rdfs:label "publication name" ;
+    rdfs:comment "Name of review publication" ;
+    rdfs:domain :ReviewPublication ;
+    rdfs:range xsd:string ;
+    rdfs:subPropertyOf schema1:name .
+
+:publicationType a owl:DatatypeProperty ;
+    rdfs:label "publication type" ;
+    rdfs:comment "Type of publication (magazine, website, blog)" ;
+    rdfs:domain :ReviewPublication ;
+    rdfs:range xsd:string .
+
+:publicationURL a owl:DatatypeProperty ;
+    rdfs:label "publication URL" ;
+    rdfs:comment "URL of publication website" ;
+    rdfs:domain :ReviewPublication ;
+    rdfs:range xsd:anyURI ;
+    rdfs:subPropertyOf schema1:url .
+
+:rateLimited a owl:DatatypeProperty ;
+    rdfs:label "rate limited" ;
+    rdfs:comment "Whether scraping is rate limited" ;
+    rdfs:domain :ScrapedData ;
+    rdfs:range xsd:boolean .
+
+:ratingCategory a owl:DatatypeProperty ;
+    rdfs:label "rating category" ;
+    rdfs:comment "Category of rating (overall, durability, value)" ;
+    rdfs:domain :GearRating ;
+    rdfs:range xsd:string .
+
+:ratingScale a owl:DatatypeProperty ;
+    rdfs:label "rating scale" ;
+    rdfs:comment "Scale used for rating (e.g., 1-5, 1-10)" ;
+    rdfs:domain :GearRating ;
+    rdfs:range xsd:string .
+
+:ratingValue a owl:DatatypeProperty ;
+    rdfs:label "rating value" ;
+    rdfs:comment "Numerical rating value" ;
+    rdfs:domain :GearRating ;
+    rdfs:range xsd:decimal ;
+    rdfs:subPropertyOf schema1:ratingValue .
+
+:receivedAward a owl:ObjectProperty ;
+    rdfs:label "received award" ;
+    rdfs:comment "Award received in review",
+        "KEY_RELATIONSHIP: Recognition tracking" ;
+    rdfs:domain :GearReview ;
+    rdfs:range :ReviewAward .
+
+:recommendationReasoning a owl:DatatypeProperty ;
+    rdfs:label "recommendation reasoning" ;
+    rdfs:comment "Explanation for why gear is recommended" ;
+    rdfs:domain :GearRecommendation ;
+    rdfs:range xsd:string .
+
+:recommendsGear a owl:ObjectProperty ;
+    rdfs:label "recommends gear" ;
+    rdfs:comment "Gear recommended for scenario",
+        "KEY_RELATIONSHIP: Final gear recommendation" ;
+    rdfs:domain :GearRecommendation ;
+    rdfs:range :GearItem .
+
+:requiresAttribution a owl:ObjectProperty ;
+    rdfs:label "requires attribution" ;
+    rdfs:comment "Attribution requirements for source",
+        "KEY_RELATIONSHIP: Legal attribution" ;
+    rdfs:domain :DataSource ;
+    rdfs:range :Attribution .
+
+:reviewDate a owl:DatatypeProperty ;
+    rdfs:label "review date" ;
+    rdfs:comment "Date review was published" ;
+    rdfs:domain :GearReview ;
+    rdfs:range xsd:date ;
+    rdfs:subPropertyOf schema1:datePublished .
+
+:reviewSummary a owl:DatatypeProperty ;
+    rdfs:label "review summary" ;
+    rdfs:comment "Summary or excerpt from review" ;
+    rdfs:domain :GearReview ;
+    rdfs:range xsd:string ;
+    rdfs:subPropertyOf schema1:abstract .
+
+:reviewTitle a owl:DatatypeProperty ;
+    rdfs:label "review title" ;
+    rdfs:comment "Title of the review" ;
+    rdfs:domain :GearReview ;
+    rdfs:range xsd:string ;
+    rdfs:subPropertyOf schema1:name .
+
+:reviewURL a owl:DatatypeProperty ;
+    rdfs:label "review URL" ;
+    rdfs:comment "URL to the full review" ;
+    rdfs:domain :GearReview ;
+    rdfs:range xsd:anyURI ;
+    rdfs:subPropertyOf schema1:url .
+
+:reviewedBy a owl:ObjectProperty ;
+    rdfs:label "reviewed by" ;
+    rdfs:comment "KEY_RELATIONSHIP: Review source attribution",
+        "Publication that published the review" ;
+    rdfs:domain :GearReview ;
+    rdfs:range :ReviewPublication ;
+    rdfs:subPropertyOf schema1:publisher .
+
+:reviewerName a owl:DatatypeProperty ;
+    rdfs:label "reviewer name" ;
+    rdfs:comment "Name of the reviewer" ;
+    rdfs:domain :GearReview ;
+    rdfs:range xsd:string ;
+    rdfs:subPropertyOf schema1:author .
+
+:robotsCompliant a owl:DatatypeProperty ;
+    rdfs:label "robots compliant" ;
+    rdfs:comment "Whether scraping follows robots.txt" ;
+    rdfs:domain :ScrapedData ;
+    rdfs:range xsd:boolean .
+
+:safetyText a owl:DatatypeProperty ;
+    rdfs:label "safety text" ;
+    rdfs:comment "Safety consideration description" ;
+    rdfs:domain :SafetyConsideration ;
+    rdfs:range xsd:string .
+
+:scenarioDescription a owl:DatatypeProperty ;
+    rdfs:label "scenario description" ;
+    rdfs:comment "Detailed description of scenario" ;
+    rdfs:domain :UsageScenario ;
+    rdfs:range xsd:string .
+
+:scenarioName a owl:DatatypeProperty ;
+    rdfs:label "scenario name" ;
+    rdfs:comment "Name of the usage scenario" ;
+    rdfs:domain :UsageScenario ;
+    rdfs:range xsd:string .
+
+:scrapingFrequency a owl:DatatypeProperty ;
+    rdfs:label "scraping frequency" ;
+    rdfs:comment "How often scraping occurs" ;
+    rdfs:domain :ScrapedData ;
+    rdfs:range xsd:string .
+
+:scrapingMethod a owl:DatatypeProperty ;
+    rdfs:label "scraping method" ;
+    rdfs:comment "Method used to scrape data" ;
+    rdfs:domain :ScrapedData ;
+    rdfs:range xsd:string .
+
+:sourceName a owl:DatatypeProperty ;
+    rdfs:label "source name" ;
+    rdfs:comment "Name of the data source" ;
+    rdfs:domain :DataSource ;
+    rdfs:range xsd:string ;
+    rdfs:subPropertyOf schema1:name .
+
+:sourceType a owl:DatatypeProperty ;
+    rdfs:label "source type" ;
+    rdfs:comment "Type of source (website, API, manual)" ;
+    rdfs:domain :DataSource ;
+    rdfs:range xsd:string .
+
+:sourceURL a owl:DatatypeProperty ;
+    rdfs:label "source URL" ;
+    rdfs:comment "URL where data was obtained" ;
+    rdfs:domain :DataSource ;
+    rdfs:range xsd:anyURI ;
+    rdfs:subPropertyOf schema1:url .
+
+:sourceVersion a owl:DatatypeProperty ;
+    rdfs:label "source version" ;
+    rdfs:comment "Version of source data" ;
+    rdfs:domain :DataSource ;
+    rdfs:range xsd:string .
+
+:suitableForActivity a owl:ObjectProperty ;
+    rdfs:label "suitable for activity" ;
+    rdfs:comment "Activity this gear is designed for",
+        "KEY_RELATIONSHIP: Important for use case mapping" ;
+    rdfs:domain :GearItem ;
+    rdfs:range :Activity .
+
+:tipText a owl:DatatypeProperty ;
+    rdfs:label "tip text" ;
+    rdfs:comment "Text of the usage tip" ;
+    rdfs:domain :UsageTip ;
+    rdfs:range xsd:string .
+
+:usageRestrictions a owl:DatatypeProperty ;
+    rdfs:label "usage restrictions" ;
+    rdfs:comment "Restrictions on data usage" ;
+    rdfs:domain :DataSource ;
+    rdfs:range xsd:string .
+
+:valueScore a owl:DatatypeProperty ;
+    rdfs:label "value score" ;
+    rdfs:comment "Value for money rating" ;
+    rdfs:domain :GearReview ;
+    rdfs:range xsd:decimal .
+
+:verificationDate a owl:DatatypeProperty ;
+    rdfs:label "verification date" ;
+    rdfs:comment "When verification was performed" ;
+    rdfs:domain :VerificationStatus ;
+    rdfs:range xsd:dateTime .
+
+:verificationMethod a owl:DatatypeProperty ;
+    rdfs:label "verification method" ;
+    rdfs:comment "Method used for verification" ;
+    rdfs:domain :VerificationStatus ;
+    rdfs:range xsd:string .
+
+:verificationStatus a owl:DatatypeProperty ;
+    rdfs:label "verification status" ;
+    rdfs:comment "Status of verification (verified, pending, failed)" ;
+    rdfs:domain :VerificationStatus ;
+    rdfs:range xsd:string .
+
+:verifiedBy a owl:DatatypeProperty ;
+    rdfs:label "verified by" ;
+    rdfs:comment "Who or what verified the data" ;
+    rdfs:domain :VerificationStatus ;
+    rdfs:range xsd:string .
+
+:weightUnit a owl:DatatypeProperty ;
+    rdfs:label "weight unit" ;
+    rdfs:comment "Unit of weight measurement" ;
+    rdfs:domain :WeightSpecification ;
+    rdfs:range xsd:string ;
+    rdfs:subPropertyOf schema1:unitCode .
+
+:weightValue a owl:DatatypeProperty ;
+    rdfs:label "weight value" ;
+    rdfs:comment "Numeric weight value in grams" ;
+    rdfs:domain :WeightSpecification ;
+    rdfs:range xsd:decimal ;
+    rdfs:subPropertyOf schema1:value .
+
+:worstRatingValue a owl:DatatypeProperty ;
+    rdfs:label "worst rating value" ;
+    rdfs:comment "Lowest possible rating value" ;
+    rdfs:domain :GearRating ;
+    rdfs:range xsd:decimal ;
+    rdfs:subPropertyOf schema1:worstRating .
+
+<http://geargraph.com/ontology/provenance> a owl:Ontology ;
+    dcterms:created "2025-11-09"^^xsd:date ;
+    dcterms:creator "GearShack" ;
+    dcterms:description "Data source tracking and provenance for outdoor gear information" ;
+    dcterms:title "GearGraph Provenance Ontology" ;
+    owl:imports <http://geargraph.com/ontology>,
+        prov: ;
+    owl:versionInfo "2.0" .
+
+<http://geargraph.com/ontology/reviews> a owl:Ontology ;
+    dcterms:created "2025-11-09"^^xsd:date ;
+    dcterms:creator "GearShack" ;
+    dcterms:description "Product review and rating system for outdoor gear publications" ;
+    dcterms:title "GearGraph Reviews Ontology" ;
+    owl:imports <http://geargraph.com/ontology>,
+        schema1: ;
+    owl:versionInfo "2.0" .
+
+<http://geargraph.com/ontology/wisdom> a owl:Ontology ;
+    dcterms:created "2025-11-09"^^xsd:date ;
+    dcterms:creator "GearShack" ;
+    dcterms:description "Structured decision framework and hiking knowledge for gear selection" ;
+    dcterms:title "GearGraph Hiking Wisdom Ontology" ;
+    owl:imports <http://geargraph.com/ontology> ;
+    owl:versionInfo "2.0" .
+
+:Activity a owl:Class ;
+    rdfs:label "Activity" ;
+    rdfs:comment "CONTEXT_ENTITY: Important for activity-based recommendations",
+        "Outdoor activity or sport" ;
+    rdfs:subClassOf schema1:SportsActivityLocation ;
+    skos:definition "Outdoor recreational or sporting activity" .
+
+:AlternativeGear a owl:Class ;
+    rdfs:label "Alternative Gear" ;
+    rdfs:comment "ALTERNATIVE_ENTITY: Backup options for gear selection",
+        "Alternative gear options for specific situations" ;
+    skos:definition "Substitute gear that can fulfill similar functions" .
+
+:OutdoorBrand a owl:Class ;
+    rdfs:label "Outdoor Brand" ;
+    rdfs:comment "Company specializing in outdoor gear",
+        "PRIMARY_ENTITY: Key brand entity for gear attribution" ;
+    rdfs:subClassOf schema1:Organization ;
+    skos:definition "Brand or manufacturer that produces outdoor equipment" .
+
+:hasSpecification a owl:ObjectProperty ;
+    rdfs:label "has specification" ;
+    rdfs:comment "Technical specification of the gear" ;
+    rdfs:domain :GearItem ;
+    rdfs:range :Specification .
+
+:GearCategory a owl:Class ;
+    rdfs:label "Gear Category" ;
+    rdfs:comment "CLASSIFICATION_ENTITY: Essential for gear categorization",
+        "High-level classification of gear (Clothing, Packs, Shelter)" ;
+    rdfs:subClassOf skos:Concept ;
+    skos:definition "Top-level categorization of outdoor gear by function" .
+
+:GearInsight a owl:Class ;
+    rdfs:label "Gear Insight" ;
+    rdfs:comment "INSIGHT_ENTITY: Specific gear knowledge",
+        "Specific insight about gear category or type" ;
+    skos:definition "Accumulated knowledge about gear performance or characteristics" .
+
+:ProductType a owl:Class ;
+    rdfs:label "Product Type" ;
+    rdfs:comment "Specific type of product within a subcategory" ;
+    rdfs:subClassOf skos:Concept ;
+    skos:definition "Specific gear type with defined characteristics" .
+
+:SafetyConsideration a owl:Class ;
+    rdfs:label "Safety Consideration" ;
+    rdfs:comment "SAFETY_ENTITY: Critical safety information",
+        "Safety-related aspect of gear use" ;
+    skos:definition "Safety factor that must be considered in gear selection" .
+
+:TemperatureRange a owl:Class ;
+    rdfs:label "Temperature Range" ;
+    rdfs:comment "Operating temperature range for gear" ;
+    rdfs:subClassOf :EnvironmentalConstraint ;
+    skos:definition "Temperature limits for optimal gear performance" .
+
+:UsageTip a owl:Class ;
+    rdfs:label "Usage Tip" ;
+    rdfs:comment "Practical tip for using gear effectively",
+        "TIP_ENTITY: Practical usage advice" ;
+    skos:definition "Actionable advice for optimal gear usage" .
+
+:UserFeedback a owl:Class ;
+    rdfs:label "User Feedback" ;
+    rdfs:comment "Aggregated user feedback patterns",
+        "FEEDBACK_ENTITY: User experience patterns" ;
+    skos:definition "Compiled feedback from actual gear users" .
+
+<http://geargraph.com/ontology> a owl:Ontology ;
+    dcterms:created "2025-11-09"^^xsd:date ;
+    dcterms:creator "GearShack" ;
+    dcterms:description "Core outdoor gear ontology extending Schema.org for cognee optimization" ;
+    dcterms:title "GearGraph Core Ontology" ;
+    owl:imports schema1: ;
+    owl:versionInfo "2.0" .
+
+:Attribution a owl:Class ;
+    rdfs:label "Attribution" ;
+    rdfs:comment "ATTRIBUTION_ENTITY: Legal attribution requirements",
+        "Required attribution for data source" ;
+    skos:definition "Credit and licensing requirements for data use" .
+
+:EnvironmentalConstraint a owl:Class ;
+    rdfs:label "Environmental Constraint" ;
+    rdfs:comment "Environmental conditions affecting gear performance" ;
+    skos:definition "Environmental factors that influence gear suitability" .
+
+:GearDecision a owl:Class ;
+    rdfs:label "Gear Decision" ;
+    rdfs:comment "DECISION_ENTITY: Core entity for recommendation logic",
+        "Decision point in gear selection process" ;
+    skos:definition "A specific choice point when selecting outdoor gear" .
+
+:GearSubcategory a owl:Class ;
+    rdfs:label "Gear Subcategory" ;
+    rdfs:comment "Mid-level classification within a category" ;
+    rdfs:subClassOf skos:Concept ;
+    skos:definition "Secondary categorization within gear categories" .
+
+:WeightSpecification a owl:Class ;
+    rdfs:label "Weight Specification" ;
+    rdfs:comment "Weight measurement with value and unit" ;
+    rdfs:subClassOf :Specification ;
+    skos:definition "Weight specification including value and unit of measurement" .
+
+:CommonMistake a owl:Class ;
+    rdfs:label "Common Mistake" ;
+    rdfs:comment "Common error in gear selection or usage",
+        "MISTAKE_ENTITY: Learning from common errors" ;
+    skos:definition "Frequently made mistake that leads to suboptimal outcomes" .
+
+:DecisionCriterion a owl:Class ;
+    rdfs:label "Decision Criterion" ;
+    rdfs:comment "CRITERION_ENTITY: Key factor for decision logic",
+        "Factor influencing gear selection" ;
+    skos:definition "Measurable or qualitative factor that influences gear choice" .
+
+:GearRecommendation a owl:Class ;
+    rdfs:label "Gear Recommendation" ;
+    rdfs:comment "RECOMMENDATION_ENTITY: Output of decision process",
+        "Structured recommendation for specific scenarios" ;
+    rdfs:subClassOf schema1:Recommendation ;
+    skos:definition "Contextual gear suggestion based on decision criteria" .
+
+:ReviewAward a owl:Class ;
+    rdfs:label "Review Award" ;
+    rdfs:comment "AWARD_ENTITY: Recognition and achievements",
+        "Award or recognition from review" ;
+    skos:definition "Special recognition or award given to gear in reviews" .
+
+:ScrapedData a owl:Class ;
+    rdfs:label "Scraped Data" ;
+    rdfs:comment "Data obtained through web scraping",
+        "SCRAPED_ENTITY: Web-scraped information" ;
+    rdfs:subClassOf :DataSource ;
+    skos:definition "Information extracted from web sources" .
+
+:Specification a owl:Class ;
+    rdfs:label "Specification" ;
+    rdfs:comment "Technical specifications of gear" ;
+    rdfs:subClassOf schema1:PropertyValue ;
+    skos:definition "Measurable characteristic of outdoor gear" .
+
+:DataQuality a owl:Class ;
+    rdfs:label "Data Quality" ;
+    rdfs:comment "Assessment of data quality",
+        "QUALITY_ENTITY: Data reliability assessment" ;
+    skos:definition "Evaluation of data accuracy and reliability" .
+
+:VerificationStatus a owl:Class ;
+    rdfs:label "Verification Status" ;
+    rdfs:comment "Status of data verification",
+        "VERIFICATION_ENTITY: Data validation status" ;
+    skos:definition "Current state of data verification process" .
+
+:FeedbackPattern a owl:Class ;
+    rdfs:label "Feedback Pattern" ;
+    rdfs:comment "Common pattern in user feedback",
+        "PATTERN_ENTITY: Common user experiences" ;
+    skos:definition "Recurring theme in user experiences" .
+
+:GearRating a owl:Class ;
+    rdfs:label "Gear Rating" ;
+    rdfs:comment "Numerical or categorical rating",
+        "RATING_ENTITY: Numerical assessment data" ;
+    rdfs:subClassOf schema1:Rating ;
+    skos:definition "Quantitative assessment of gear performance" .
+
+:ReviewPublication a owl:Class ;
+    rdfs:label "Review Publication" ;
+    rdfs:comment "PUBLICATION_ENTITY: Source of professional reviews",
+        "Publication that reviews outdoor gear" ;
+    rdfs:subClassOf schema1:Organization ;
+    skos:definition "Media organization specializing in outdoor gear reviews" .
+
+:UsageScenario a owl:Class ;
+    rdfs:label "Usage Scenario" ;
+    rdfs:comment "SCENARIO_ENTITY: Context for recommendations",
+        "Specific situation where gear is used" ;
+    skos:definition "Contextual scenario describing gear usage conditions" .
+
+:DataProvenance a owl:Class ;
+    rdfs:label "Data Provenance" ;
+    rdfs:comment "PROVENANCE_ENTITY: Data lineage tracking",
+        "Provenance information for gear data" ;
+    rdfs:subClassOf prov:Activity ;
+    skos:definition "Complete history and origin of data" .
+
+:GearReview a owl:Class ;
+    rdfs:label "Gear Review" ;
+    rdfs:comment "Professional review of outdoor gear",
+        "REVIEW_ENTITY: Primary review entity for cognee extraction" ;
+    rdfs:subClassOf schema1:Review ;
+    skos:definition "Editorial review of outdoor gear from professional publications" .
+
+:DataSource a owl:Class ;
+    rdfs:label "Data Source" ;
+    rdfs:comment "SOURCE_ENTITY: Primary data source tracking",
+        "Source of gear information" ;
+    rdfs:subClassOf prov:Entity ;
+    skos:definition "Origin of information about outdoor gear" .
+
+:GearItem a owl:Class ;
+    rdfs:label "Gear Item" ;
+    rdfs:comment "Outdoor equipment or gear item",
+        "PRIMARY_ENTITY: Main entity type for outdoor gear extraction" ;
+    rdfs:subClassOf schema1:Product ;
+    skos:definition "Any piece of outdoor equipment designed for activities like hiking, camping, or mountaineering" .

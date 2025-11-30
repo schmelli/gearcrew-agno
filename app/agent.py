@@ -11,6 +11,14 @@ from dotenv import load_dotenv
 from app.models.gear import ExtractionResult, GearItem, KnowledgeFact, Manufacturer
 from app.tools.youtube import get_youtube_transcript
 from app.tools.web_scraper import scrape_webpage, search_web
+from app.tools.geargraph import (
+    find_similar_gear,
+    check_gear_exists,
+    get_graph_statistics,
+    save_gear_to_graph,
+    save_insight_to_graph,
+    search_graph,
+)
 
 load_dotenv()
 
@@ -93,7 +101,19 @@ def create_gear_agent() -> Agent:
         name="GearCrew",
         model=Claude(id="claude-sonnet-4-20250514"),
         instructions=system_prompt,
-        tools=[fetch_youtube_transcript, fetch_webpage_content, search_gear_info],
+        tools=[
+            # Content fetching tools
+            fetch_youtube_transcript,
+            fetch_webpage_content,
+            search_gear_info,
+            # GearGraph database tools
+            find_similar_gear,
+            check_gear_exists,
+            get_graph_statistics,
+            save_gear_to_graph,
+            save_insight_to_graph,
+            search_graph,
+        ],
         markdown=True,
     )
 
