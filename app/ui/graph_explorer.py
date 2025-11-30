@@ -136,7 +136,7 @@ def render_overview_tab():
             df = pd.DataFrame(
                 [{"Label": k, "Count": v} for k, v in node_counts.items()]
             )
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.dataframe(df, width="stretch", hide_index=True)
         else:
             st.info("No nodes found")
 
@@ -147,7 +147,7 @@ def render_overview_tab():
             df = pd.DataFrame(
                 [{"Type": k, "Count": v} for k, v in rel_counts.items()]
             )
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.dataframe(df, width="stretch", hide_index=True)
         else:
             st.info("No relationships found")
 
@@ -454,7 +454,7 @@ LIMIT 30
                                 flat_row[k] = v
                         flat_results.append(flat_row)
                     df = pd.DataFrame(flat_results)
-                    st.dataframe(df, use_container_width=True)
+                    st.dataframe(df, width="stretch")
                 except Exception:
                     for row in results:
                         st.json(dict(row) if hasattr(row, "items") else str(row))

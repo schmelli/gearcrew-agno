@@ -19,24 +19,19 @@ logger = logging.getLogger(__name__)
 _memgraph: Optional[Memgraph] = None
 
 
-def get_memgraph() -> Optional[Memgraph]:
-    """Get or create the Memgraph connection instance.
+def _create_connection() -> Optional[Memgraph]:
+    """Create a new Memgraph connection.
 
     Returns:
         Memgraph connection or None if connection fails
     """
-    global _memgraph
-
-    if _memgraph is not None:
-        return _memgraph
-
     try:
         host = os.getenv("MEMGRAPH_HOST", "geargraph.gearshack.app")
         port = int(os.getenv("MEMGRAPH_PORT", "7687"))
         user = os.getenv("MEMGRAPH_USER", "memgraph")
         password = os.getenv("MEMGRAPH_PASSWORD", "")
 
-        _memgraph = Memgraph(
+        connection = Memgraph(
             host=host,
             port=port,
             username=user,
@@ -45,11 +40,54 @@ def get_memgraph() -> Optional[Memgraph]:
         )
 
         logger.info(f"Connected to Memgraph at {host}:{port}")
-        return _memgraph
+        return connection
 
     except Exception as e:
         logger.error(f"Failed to connect to Memgraph: {e}")
         return None
+
+
+def get_memgraph(force_reconnect: bool = False) -> Optional[Memgraph]:
+    """Get or create the Memgraph connection instance.
+
+    Args:
+        force_reconnect: If True, create a new connection even if one exists
+
+    Returns:
+        Memgraph connection or None if connection fails
+    """
+    global _memgraph
+
+    if force_reconnect:
+        _memgraph = None
+
+    if _memgraph is not None:
+        return _memgraph
+
+    _memgraph = _create_connection()
+    return _memgraph
+
+
+def _reconnect_and_retry(func):
+    """Decorator to retry database operations with reconnection on failure."""
+    def wrapper(*args, **kwargs):
+        global _memgraph
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            error_msg = str(e).lower()
+            # Check for connection-related errors
+            if any(err in error_msg for err in ["chunk", "connection", "socket", "closed", "timeout"]):
+                logger.warning(f"Connection error, attempting reconnect: {e}")
+                _memgraph = None
+                _memgraph = _create_connection()
+                if _memgraph:
+                    try:
+                        return func(*args, **kwargs)
+                    except Exception as retry_e:
+                        logger.error(f"Retry failed: {retry_e}")
+            raise
+    return wrapper
 
 
 def execute_cypher(query: str, params: Optional[dict] = None) -> bool:
@@ -62,20 +100,32 @@ def execute_cypher(query: str, params: Optional[dict] = None) -> bool:
     Returns:
         True if successful, False otherwise
     """
-    db = get_memgraph()
-    if db is None:
-        logger.error("No database connection available")
-        return False
+    global _memgraph
 
-    try:
-        if params:
-            db.execute(query, params)
-        else:
-            db.execute(query)
-        return True
-    except Exception as e:
-        logger.error(f"Cypher execution failed: {e}")
-        return False
+    for attempt in range(2):
+        db = get_memgraph(force_reconnect=(attempt > 0))
+        if db is None:
+            logger.error("No database connection available")
+            return False
+
+        try:
+            if params:
+                db.execute(query, params)
+            else:
+                db.execute(query)
+            return True
+        except Exception as e:
+            error_msg = str(e).lower()
+            if attempt == 0 and any(
+                err in error_msg for err in ["chunk", "connection", "socket", "closed", "timeout"]
+            ):
+                logger.warning(f"Connection error on attempt {attempt + 1}, retrying: {e}")
+                _memgraph = None
+                continue
+            logger.error(f"Cypher execution failed: {e}")
+            return False
+
+    return False
 
 
 def execute_and_fetch(query: str, params: Optional[dict] = None) -> list[dict[str, Any]]:
@@ -88,20 +138,32 @@ def execute_and_fetch(query: str, params: Optional[dict] = None) -> list[dict[st
     Returns:
         List of result dictionaries
     """
-    db = get_memgraph()
-    if db is None:
-        logger.error("No database connection available")
-        return []
+    global _memgraph
 
-    try:
-        if params:
-            results = list(db.execute_and_fetch(query, params))
-        else:
-            results = list(db.execute_and_fetch(query))
-        return results
-    except Exception as e:
-        logger.error(f"Cypher query failed: {e}")
-        return []
+    for attempt in range(2):
+        db = get_memgraph(force_reconnect=(attempt > 0))
+        if db is None:
+            logger.error("No database connection available")
+            return []
+
+        try:
+            if params:
+                results = list(db.execute_and_fetch(query, params))
+            else:
+                results = list(db.execute_and_fetch(query))
+            return results
+        except Exception as e:
+            error_msg = str(e).lower()
+            if attempt == 0 and any(
+                err in error_msg for err in ["chunk", "connection", "socket", "closed", "timeout"]
+            ):
+                logger.warning(f"Connection error on attempt {attempt + 1}, retrying: {e}")
+                _memgraph = None
+                continue
+            logger.error(f"Cypher query failed: {e}")
+            return []
+
+    return []
 
 
 def find_similar_nodes(name: str, label: str = "GearItem", limit: int = 5) -> list[dict]:
