@@ -1,7 +1,14 @@
-"""GearCrew Agent - Extracts hiking/backpacking gear information from web sources."""
+"""GearCrew Agent - Extracts hiking/backpacking gear information from web sources.
+
+Uses tiered Claude models for different task complexities:
+- Haiku 4.5: Fast, simple tasks (quick lookups, simple questions)
+- Sonnet 4.5: Standard tasks (extraction, analysis, most interactions)
+- Opus 4.5 + Thinking: Complex tasks (verification, conflict resolution, deep analysis)
+"""
 
 import os
-from typing import Optional
+import re
+from typing import Optional, Literal
 
 import langwatch
 from agno.agent import Agent
@@ -22,6 +29,25 @@ from app.tools.geargraph import (
 
 load_dotenv()
 
+# Model tier definitions
+ModelTier = Literal["haiku", "sonnet", "opus"]
+
+CLAUDE_MODELS = {
+    "haiku": Claude(
+        id="claude-haiku-4-5-20251001",
+        max_tokens=4096,
+    ),
+    "sonnet": Claude(
+        id="claude-sonnet-4-5-20250929",
+        max_tokens=8192,
+    ),
+    "opus": Claude(
+        id="claude-opus-4-5-20251101",
+        max_tokens=16384,
+        thinking={"type": "enabled", "budget_tokens": 10000},
+    ),
+}
+
 
 def _get_system_prompt() -> str:
     """Fetch the system prompt from LangWatch."""
@@ -33,6 +59,52 @@ def _get_system_prompt() -> str:
     return ""
 
 
+def _classify_task_complexity(message: str) -> ModelTier:
+    """Classify the complexity of a task to select appropriate model.
+
+    Args:
+        message: User message or task description
+
+    Returns:
+        Model tier: 'haiku', 'sonnet', or 'opus'
+    """
+    message_lower = message.lower()
+
+    # Opus-level tasks (complex analysis, verification, conflicts)
+    opus_patterns = [
+        r"verify|verification|validate|fact.?check",
+        r"conflict|discrepancy|contradiction",
+        r"compare.*multiple|analyze.*depth|comprehensive",
+        r"why.*different|explain.*difference",
+        r"reconcile|resolve.*issue",
+        r"complex|difficult|challenging",
+    ]
+    for pattern in opus_patterns:
+        if re.search(pattern, message_lower):
+            return "opus"
+
+    # Haiku-level tasks (simple lookups, quick questions)
+    haiku_patterns = [
+        r"^(what|who|where|when|which)\s+is\b",
+        r"^(list|show|get|find)\s+(me\s+)?(the\s+)?",
+        r"how\s+much\s+(does|is)",
+        r"^(yes|no)\?",
+        r"search\s+(for|the)\s+graph",
+        r"graph\s+stats|statistics",
+    ]
+    for pattern in haiku_patterns:
+        if re.search(pattern, message_lower):
+            return "haiku"
+
+    # Check message length - very short messages likely simple
+    if len(message) < 50 and "?" in message:
+        return "haiku"
+
+    # Default to Sonnet for standard extraction and analysis tasks
+    return "sonnet"
+
+
+# Tool functions
 def fetch_youtube_transcript(video_url: str) -> str:
     """Fetch transcript from a YouTube video.
 
@@ -89,55 +161,69 @@ def search_gear_info(query: str) -> str:
         return f"Error searching: {str(e)}"
 
 
-def create_gear_agent() -> Agent:
-    """Create and configure the gear extraction agent.
+# All available tools for agents
+AGENT_TOOLS = [
+    # Content fetching tools
+    fetch_youtube_transcript,
+    fetch_webpage_content,
+    search_gear_info,
+    # GearGraph database tools
+    find_similar_gear,
+    check_gear_exists,
+    get_graph_statistics,
+    save_gear_to_graph,
+    save_insight_to_graph,
+    search_graph,
+]
+
+
+def create_gear_agent(model_tier: ModelTier = "sonnet") -> Agent:
+    """Create and configure a gear extraction agent with specified model tier.
+
+    Args:
+        model_tier: Which Claude model to use ('haiku', 'sonnet', 'opus')
 
     Returns:
         Configured Agno Agent instance
     """
     system_prompt = _get_system_prompt()
+    model = CLAUDE_MODELS[model_tier]
 
     agent = Agent(
-        name="GearCrew",
-        model=Claude(id="claude-sonnet-4-20250514"),
+        name=f"GearCrew-{model_tier.capitalize()}",
+        model=model,
         instructions=system_prompt,
-        tools=[
-            # Content fetching tools
-            fetch_youtube_transcript,
-            fetch_webpage_content,
-            search_gear_info,
-            # GearGraph database tools
-            find_similar_gear,
-            check_gear_exists,
-            get_graph_statistics,
-            save_gear_to_graph,
-            save_insight_to_graph,
-            search_graph,
-        ],
+        tools=AGENT_TOOLS,
         markdown=True,
     )
 
     return agent
 
 
-_agent: Optional[Agent] = None
+# Cached agent instances per tier
+_agents: dict[ModelTier, Agent] = {}
 
 
-def get_agent() -> Agent:
-    """Get or create the singleton agent instance.
+def get_agent(model_tier: ModelTier = "sonnet") -> Agent:
+    """Get or create an agent instance for the specified model tier.
+
+    Args:
+        model_tier: Which Claude model to use ('haiku', 'sonnet', 'opus')
 
     Returns:
         The gear extraction agent
     """
-    global _agent
-    if _agent is None:
-        _agent = create_gear_agent()
-    return _agent
+    global _agents
+    if model_tier not in _agents:
+        _agents[model_tier] = create_gear_agent(model_tier)
+    return _agents[model_tier]
 
 
 @langwatch.trace()
 def extract_gear_info(source_url: str) -> ExtractionResult:
     """Extract gear information from a given source URL.
+
+    Uses Sonnet for standard extraction tasks.
 
     Args:
         source_url: URL to extract gear information from (YouTube, blog, etc.)
@@ -145,7 +231,8 @@ def extract_gear_info(source_url: str) -> ExtractionResult:
     Returns:
         Structured extraction result with gear items and facts
     """
-    agent = get_agent()
+    # Extraction is a standard complexity task - use Sonnet
+    agent = get_agent("sonnet")
 
     prompt = f"""Please analyze the following source and extract all hiking/backpacking gear information:
 
@@ -173,15 +260,37 @@ Return the structured extraction result."""
     )
 
 
-def run_agent_chat(message: str) -> str:
+def run_agent_chat(message: str, model_tier: ModelTier | None = None) -> str:
     """Run the agent in chat mode for interactive conversations.
+
+    Automatically selects the appropriate model tier based on task complexity,
+    or uses the specified tier if provided.
+
+    Args:
+        message: User message to process
+        model_tier: Optional model tier override ('haiku', 'sonnet', 'opus')
+
+    Returns:
+        Agent's response as string
+    """
+    # Auto-classify if not specified
+    if model_tier is None:
+        model_tier = _classify_task_complexity(message)
+
+    agent = get_agent(model_tier)
+    response = agent.run(message)
+    return str(response.content) if response.content else ""
+
+
+def run_agent_chat_with_tier(message: str) -> tuple[str, ModelTier]:
+    """Run the agent and return both response and which model tier was used.
 
     Args:
         message: User message to process
 
     Returns:
-        Agent's response as string
+        Tuple of (response string, model tier used)
     """
-    agent = get_agent()
-    response = agent.run(message)
-    return str(response.content) if response.content else ""
+    model_tier = _classify_task_complexity(message)
+    response = run_agent_chat(message, model_tier)
+    return response, model_tier

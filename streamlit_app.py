@@ -147,6 +147,16 @@ elif view_mode == "Agent Chat":
                 if yt_url:
                     render_youtube_preview(yt_url)
                     st.markdown("---")
+            elif message["role"] == "assistant" and "model" in message:
+                # Show model tier indicator for assistant messages
+                model_tier = message["model"]
+                model_icons = {"haiku": "[H]", "sonnet": "[S]", "opus": "[O]"}
+                model_names = {
+                    "haiku": "Haiku 4.5",
+                    "sonnet": "Sonnet 4.5",
+                    "opus": "Opus 4.5",
+                }
+                st.caption(f"{model_icons.get(model_tier, '')} {model_names.get(model_tier, '')}")
             st.markdown(message["content"])
 
     # Chat input
@@ -164,27 +174,38 @@ elif view_mode == "Agent Chat":
         # Get agent response
         with st.chat_message("assistant"):
             # Show processing indicator with video info if applicable
+            status_placeholder = st.empty()
             if yt_url:
-                status_placeholder = st.empty()
                 status_placeholder.info("Fetching video transcript and analyzing gear mentions...")
 
             with st.spinner("Thinking..."):
                 try:
-                    from app.agent import run_agent_chat
+                    from app.agent import run_agent_chat_with_tier
 
-                    response = run_agent_chat(prompt)
+                    response, model_tier = run_agent_chat_with_tier(prompt)
 
                     # Clear the status message
-                    if yt_url:
-                        status_placeholder.empty()
+                    status_placeholder.empty()
+
+                    # Show which model was used
+                    model_icons = {
+                        "haiku": "[H]",
+                        "sonnet": "[S]",
+                        "opus": "[O]",
+                    }
+                    model_names = {
+                        "haiku": "Haiku 4.5 (fast)",
+                        "sonnet": "Sonnet 4.5 (balanced)",
+                        "opus": "Opus 4.5 (thinking)",
+                    }
+                    st.caption(f"{model_icons[model_tier]} {model_names[model_tier]}")
 
                     st.markdown(response)
                     st.session_state.messages.append(
-                        {"role": "assistant", "content": response}
+                        {"role": "assistant", "content": response, "model": model_tier}
                     )
                 except Exception as e:
-                    if yt_url:
-                        status_placeholder.empty()
+                    status_placeholder.empty()
                     error_msg = f"Error: {str(e)}"
                     st.error(error_msg)
                     st.session_state.messages.append(
