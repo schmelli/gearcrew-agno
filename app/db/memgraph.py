@@ -534,3 +534,130 @@ def get_gear_from_source(source_url: str) -> list[dict]:
            g.weight_grams as weight_grams, g.price_usd as price_usd
     """
     return execute_and_fetch(query, {"url": source_url})
+
+
+def find_potential_duplicates(name: str, brand: Optional[str] = None) -> list[dict]:
+    """Find potential duplicate gear items using fuzzy matching.
+
+    Searches for items with similar names, considering:
+    - Exact matches (case-insensitive)
+    - Substring matches (name contains search or vice versa)
+    - Same brand with similar product names
+    - Items in ProductFamily relationships
+
+    Args:
+        name: Product name to search for
+        brand: Optional brand name for more targeted search
+
+    Returns:
+        List of potential matches with similarity info
+    """
+    # Extract key terms from the name (remove common words)
+    name_lower = name.lower()
+    stop_words = {"the", "a", "an", "and", "or", "for", "with", "ultralight", "lightweight"}
+    name_terms = [w for w in name_lower.split() if w not in stop_words and len(w) > 2]
+
+    results = []
+
+    # Search for exact and substring matches
+    query = """
+    MATCH (g:GearItem)
+    WHERE toLower(g.name) CONTAINS toLower($name)
+       OR toLower($name) CONTAINS toLower(g.name)
+    OPTIONAL MATCH (g)-[:IS_VARIANT_OF]->(pf:ProductFamily)
+    OPTIONAL MATCH (b:OutdoorBrand)-[:MANUFACTURES_ITEM]->(g)
+    RETURN g.name as name, g.brand as brand, g.category as category,
+           g.weight_grams as weight, g.price_usd as price,
+           pf.name as product_family,
+           b.name as manufacturer,
+           'substring_match' as match_type
+    LIMIT 10
+    """
+    substring_matches = execute_and_fetch(query, {"name": name})
+    results.extend(substring_matches)
+
+    # If brand provided, also search for same brand products
+    if brand:
+        brand_query = """
+        MATCH (g:GearItem)
+        WHERE toLower(g.brand) = toLower($brand)
+        OPTIONAL MATCH (g)-[:IS_VARIANT_OF]->(pf:ProductFamily)
+        RETURN g.name as name, g.brand as brand, g.category as category,
+               g.weight_grams as weight, g.price_usd as price,
+               pf.name as product_family,
+               'same_brand' as match_type
+        LIMIT 10
+        """
+        brand_matches = execute_and_fetch(brand_query, {"brand": brand})
+        # Add only if not already in results
+        existing_names = {r["name"].lower() for r in results}
+        for match in brand_matches:
+            if match["name"].lower() not in existing_names:
+                results.append(match)
+
+    # Search ProductFamily nodes
+    pf_query = """
+    MATCH (pf:ProductFamily)
+    WHERE toLower(pf.name) CONTAINS toLower($name)
+       OR toLower($name) CONTAINS toLower(pf.name)
+    OPTIONAL MATCH (g:GearItem)-[:IS_VARIANT_OF]->(pf)
+    RETURN pf.name as product_family, collect(g.name) as variants,
+           'product_family' as match_type
+    LIMIT 5
+    """
+    pf_matches = execute_and_fetch(pf_query, {"name": name})
+    for pf in pf_matches:
+        results.append({
+            "name": pf["product_family"],
+            "brand": None,
+            "category": "ProductFamily",
+            "variants": pf.get("variants", []),
+            "match_type": "product_family",
+        })
+
+    return results
+
+
+def merge_gear_items(source_name: str, source_brand: str, target_name: str, target_brand: str) -> bool:
+    """Merge a duplicate gear item into an existing one.
+
+    Transfers all relationships from source to target and deletes source.
+
+    Args:
+        source_name: Name of the duplicate to remove
+        source_brand: Brand of the duplicate
+        target_name: Name of the item to keep
+        target_brand: Brand of the item to keep
+
+    Returns:
+        True if successful
+    """
+    # Transfer relationships
+    transfer_query = """
+    MATCH (source:GearItem {name: $source_name, brand: $source_brand})
+    MATCH (target:GearItem {name: $target_name, brand: $target_brand})
+
+    // Transfer EXTRACTED_FROM relationships
+    OPTIONAL MATCH (source)-[r1:EXTRACTED_FROM]->(vs:VideoSource)
+    FOREACH (_ IN CASE WHEN r1 IS NOT NULL THEN [1] ELSE [] END |
+        MERGE (target)-[:EXTRACTED_FROM]->(vs)
+    )
+
+    // Transfer HAS_TIP relationships
+    OPTIONAL MATCH (source)-[r2:HAS_TIP]->(i:Insight)
+    FOREACH (_ IN CASE WHEN r2 IS NOT NULL THEN [1] ELSE [] END |
+        MERGE (target)-[:HAS_TIP]->(i)
+    )
+
+    // Delete the source node and its relationships
+    DETACH DELETE source
+
+    RETURN target.name as merged_into
+    """
+    results = execute_and_fetch(transfer_query, {
+        "source_name": source_name,
+        "source_brand": source_brand,
+        "target_name": target_name,
+        "target_brand": target_brand,
+    })
+    return len(results) > 0

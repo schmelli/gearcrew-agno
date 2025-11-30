@@ -29,6 +29,8 @@ from app.tools.geargraph import (
     get_previous_extraction_summary,
     save_extraction_result,
     link_extracted_gear_to_source,
+    merge_duplicate_gear,
+    update_existing_gear,
 )
 
 load_dotenv()
@@ -171,13 +173,16 @@ AGENT_TOOLS = [
     fetch_youtube_transcript,
     fetch_webpage_content,
     search_gear_info,
-    # GearGraph database tools
-    find_similar_gear,
+    # GearGraph database tools - DUPLICATE CHECK FIRST!
+    find_similar_gear,  # MUST call before save_gear_to_graph
     check_gear_exists,
     get_graph_statistics,
     save_gear_to_graph,
     save_insight_to_graph,
     search_graph,
+    # Duplicate management tools
+    merge_duplicate_gear,
+    update_existing_gear,
     # Source tracking tools
     check_video_already_processed,
     get_previous_extraction_summary,

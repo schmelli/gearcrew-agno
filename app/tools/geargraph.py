@@ -25,31 +25,72 @@ from app.db.memgraph import (
     link_gear_to_source,
     get_all_video_sources,
     get_gear_from_source,
+    find_potential_duplicates,
+    merge_gear_items,
 )
 
 logger = logging.getLogger(__name__)
 
 
-def find_similar_gear(name: str, label: str = "GearItem") -> str:
-    """Search the GearGraph for products with similar names.
+def find_similar_gear(name: str, brand: Optional[str] = None) -> str:
+    """Search for potential duplicate gear items before saving.
 
-    Use this tool to check if a product already exists before adding it,
-    to prevent duplicates in the database.
+    **CRITICAL: You MUST call this BEFORE saving any gear item to prevent duplicates.**
+
+    This tool searches for:
+    - Exact name matches (case-insensitive)
+    - Substring matches (e.g., "BRS-3000T" matches "BRS 3000T Ultralight Stove")
+    - Same brand products (to identify product families)
+    - Existing ProductFamily nodes
 
     Args:
         name: Name of the product to search for
-        label: Node type to search (GearItem, OutdoorBrand, ProductFamily)
+        brand: Brand name (highly recommended for accurate matching)
 
     Returns:
-        JSON string with matching nodes or message if none found
+        Detailed report of potential duplicates with recommendations
     """
     try:
-        results = find_similar_nodes(name, label, limit=5)
+        results = find_potential_duplicates(name, brand)
 
         if not results:
-            return f"No similar nodes to '{name}' found in the graph."
+            return (
+                f"NO DUPLICATES FOUND for '{name}'" +
+                (f" by {brand}" if brand else "") +
+                ". Safe to create new GearItem."
+            )
 
-        return f"Found existing nodes: {json.dumps(results, default=str)}"
+        # Format results for the agent
+        output = [
+            f"**POTENTIAL DUPLICATES FOUND** for '{name}'" +
+            (f" by {brand}" if brand else "") + ":\n"
+        ]
+
+        for i, match in enumerate(results, 1):
+            match_type = match.get("match_type", "unknown")
+            if match_type == "product_family":
+                output.append(
+                    f"{i}. PRODUCT FAMILY: '{match['name']}'\n"
+                    f"   Existing variants: {match.get('variants', [])}\n"
+                    f"   -> Consider linking to this family instead of creating new item"
+                )
+            else:
+                output.append(
+                    f"{i}. {match.get('name', 'Unknown')} by {match.get('brand', 'Unknown brand')}\n"
+                    f"   Category: {match.get('category', 'unknown')}\n"
+                    f"   Weight: {match.get('weight', 'N/A')}g, Price: ${match.get('price', 'N/A')}\n"
+                    f"   Match type: {match_type}"
+                )
+                if match.get("product_family"):
+                    output.append(f"   Part of family: {match['product_family']}")
+
+        output.append("\n**DECISION REQUIRED:**")
+        output.append("- If this is THE SAME PRODUCT: Do NOT create a new entry")
+        output.append("- If this is a VARIANT: Link to existing ProductFamily")
+        output.append("- If truly NEW: Proceed with save_gear_to_graph")
+
+        return "\n".join(output)
+
     except Exception as e:
         logger.error(f"Error searching for similar nodes: {e}")
         return f"Error searching graph: {str(e)}"
@@ -428,6 +469,115 @@ def link_extracted_gear_to_source(gear_name: str, brand: str, source_url: str) -
     except Exception as e:
         logger.error(f"Error linking gear to source: {e}")
         return f"Error: {str(e)}"
+
+
+def merge_duplicate_gear(
+    duplicate_name: str,
+    duplicate_brand: str,
+    canonical_name: str,
+    canonical_brand: str,
+) -> str:
+    """Merge a duplicate gear item into the canonical (correct) entry.
+
+    Use this when you've identified that two entries represent the same product.
+    The duplicate will be deleted and its relationships transferred to the canonical item.
+
+    Args:
+        duplicate_name: Name of the duplicate item to remove
+        duplicate_brand: Brand of the duplicate item
+        canonical_name: Name of the correct/canonical item to keep
+        canonical_brand: Brand of the canonical item
+
+    Returns:
+        Success or error message
+    """
+    try:
+        success = merge_gear_items(
+            source_name=duplicate_name,
+            source_brand=duplicate_brand,
+            target_name=canonical_name,
+            target_brand=canonical_brand,
+        )
+
+        if success:
+            return (
+                f"Successfully merged '{duplicate_name}' into '{canonical_name}'. "
+                f"The duplicate has been removed and relationships transferred."
+            )
+        return f"Failed to merge - check that both items exist in the database"
+
+    except Exception as e:
+        logger.error(f"Error merging duplicates: {e}")
+        return f"Error: {str(e)}"
+
+
+def update_existing_gear(
+    name: str,
+    brand: str,
+    weight_grams: Optional[int] = None,
+    price_usd: Optional[float] = None,
+    category: Optional[str] = None,
+    product_url: Optional[str] = None,
+) -> str:
+    """Update an existing gear item with new information.
+
+    Use this instead of creating a new entry when the item already exists
+    but you have additional or corrected information.
+
+    Args:
+        name: Exact name of the existing item
+        brand: Exact brand of the existing item
+        weight_grams: Updated weight (optional)
+        price_usd: Updated price (optional)
+        category: Updated category (optional)
+        product_url: Updated product URL (optional)
+
+    Returns:
+        Success or error message
+    """
+    try:
+        set_parts = []
+        params = {"name": name, "brand": brand}
+
+        if weight_grams is not None:
+            set_parts.append("g.weight_grams = $weight")
+            params["weight"] = weight_grams
+
+        if price_usd is not None:
+            set_parts.append("g.price_usd = $price")
+            params["price"] = price_usd
+
+        if category:
+            set_parts.append("g.category = $category")
+            params["category"] = category
+
+        if product_url:
+            set_parts.append("g.productUrl = $url")
+            params["url"] = product_url
+
+        if not set_parts:
+            return "No updates provided"
+
+        set_parts.append("g.updatedAt = datetime()")
+        set_clause = ", ".join(set_parts)
+
+        query = f"""
+        MATCH (g:GearItem {{name: $name, brand: $brand}})
+        SET {set_clause}
+        RETURN g.name as name
+        """
+
+        results = execute_and_fetch(query, params)
+
+        if results:
+            return f"Successfully updated '{name}' by {brand}"
+        return f"Item not found: '{name}' by {brand}"
+
+    except Exception as e:
+        logger.error(f"Error updating gear: {e}")
+        return f"Error: {str(e)}"
+
+
 
 
 def execute_read_query(cypher: str) -> str:

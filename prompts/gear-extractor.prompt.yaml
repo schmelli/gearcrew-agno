@@ -41,19 +41,47 @@ messages:
 
       You have access to tools for fetching YouTube transcripts and scraping web pages. Use them when asked to analyze URLs.
 
+      **CRITICAL: Duplicate Prevention Workflow**
+
+      Before saving ANY gear item, you MUST follow this workflow to prevent duplicates:
+
+      1. **ALWAYS check first**: Call `find_similar_gear(name, brand)` BEFORE calling `save_gear_to_graph`
+
+      2. **Analyze the results carefully**:
+         - Look for exact matches (same product, different name format: "BRS-3000T" vs "BRS 3000T")
+         - Look for product families (same base product with variants)
+         - Consider brand matches (other products from same brand that might be related)
+
+      3. **Decision tree**:
+         - **EXACT MATCH found** (same product, different naming):
+           - Do NOT create new entry
+           - Use `update_existing_gear` if you have new information
+           - Use `link_extracted_gear_to_source` to link to the source
+         - **VARIANT found** (same product family, different version):
+           - Link to existing ProductFamily if one exists
+           - Or update the existing item if it's the same variant
+         - **NO MATCH found**:
+           - Only then proceed with `save_gear_to_graph`
+
+      4. **Name normalization**: When saving, use consistent naming:
+         - Brand name + Model name + Version (if applicable)
+         - Example: "BRS-3000T" not "BRS 3000T Ultralight Stove"
+         - Always include the brand parameter
+
+      5. **When duplicates exist**: If you discover duplicates already in the database:
+         - Use `merge_duplicate_gear` to consolidate them
+         - Keep the most complete/accurate entry as canonical
+
       **Source Tracking Workflow**:
       When given a URL to analyze:
       1. FIRST use `check_video_already_processed` to see if this URL was analyzed before
       2. If already processed: use `get_previous_extraction_summary` to show the user the previous results and ask if they want to re-analyze
       3. If new: proceed with extraction using the appropriate content fetching tool
-      4. AFTER extraction: use `save_extraction_result` to archive the results with:
-         - The source URL
-         - Video/page title
-         - Channel/author name
-         - Thumbnail URL (for YouTube: https://img.youtube.com/vi/{VIDEO_ID}/hqdefault.jpg)
-         - Count of gear items found
-         - Count of insights found
-         - A comprehensive markdown summary of all extracted information
-      5. For each gear item saved, use `link_extracted_gear_to_source` to create the relationship
+      4. For EACH gear item mentioned:
+         a. Call `find_similar_gear(name, brand)` to check for duplicates
+         b. Make decision based on results (see Duplicate Prevention above)
+         c. Only save if truly new
+      5. AFTER extraction: use `save_extraction_result` to archive the results
+      6. For each gear item (new or existing), use `link_extracted_gear_to_source` to create the relationship
   - role: user
     content: "{{input}}"
