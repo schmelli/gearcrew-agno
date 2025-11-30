@@ -68,6 +68,12 @@ def get_memgraph(force_reconnect: bool = False) -> Optional[Memgraph]:
     return _memgraph
 
 
+def _is_connection_error(error_msg: str) -> bool:
+    """Check if an error message indicates a connection problem."""
+    connection_errors = ["chunk", "connection", "socket", "closed", "timeout", "broken pipe"]
+    return any(err in error_msg.lower() for err in connection_errors)
+
+
 def _reconnect_and_retry(func):
     """Decorator to retry database operations with reconnection on failure."""
     def wrapper(*args, **kwargs):
@@ -75,10 +81,9 @@ def _reconnect_and_retry(func):
         try:
             return func(*args, **kwargs)
         except Exception as e:
-            error_msg = str(e).lower()
-            # Check for connection-related errors
-            if any(err in error_msg for err in ["chunk", "connection", "socket", "closed", "timeout"]):
-                logger.warning(f"Connection error, attempting reconnect: {e}")
+            error_msg = str(e)
+            if _is_connection_error(error_msg):
+                logger.debug(f"Connection stale, reconnecting... ({error_msg[:50]})")
                 _memgraph = None
                 _memgraph = _create_connection()
                 if _memgraph:
@@ -115,11 +120,9 @@ def execute_cypher(query: str, params: Optional[dict] = None) -> bool:
                 db.execute(query)
             return True
         except Exception as e:
-            error_msg = str(e).lower()
-            if attempt == 0 and any(
-                err in error_msg for err in ["chunk", "connection", "socket", "closed", "timeout"]
-            ):
-                logger.warning(f"Connection error on attempt {attempt + 1}, retrying: {e}")
+            error_msg = str(e)
+            if attempt == 0 and _is_connection_error(error_msg):
+                logger.debug(f"Connection stale, reconnecting... ({error_msg[:50]})")
                 _memgraph = None
                 continue
             logger.error(f"Cypher execution failed: {e}")
@@ -153,11 +156,9 @@ def execute_and_fetch(query: str, params: Optional[dict] = None) -> list[dict[st
                 results = list(db.execute_and_fetch(query))
             return results
         except Exception as e:
-            error_msg = str(e).lower()
-            if attempt == 0 and any(
-                err in error_msg for err in ["chunk", "connection", "socket", "closed", "timeout"]
-            ):
-                logger.warning(f"Connection error on attempt {attempt + 1}, retrying: {e}")
+            error_msg = str(e)
+            if attempt == 0 and _is_connection_error(error_msg):
+                logger.debug(f"Connection stale, reconnecting... ({error_msg[:50]})")
                 _memgraph = None
                 continue
             logger.error(f"Cypher query failed: {e}")
