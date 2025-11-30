@@ -1,0 +1,10 @@
+{
+  "lockfileVersion": 1,
+  "prompts": {
+    "gear-extractor": {
+      "version": 1,
+      "versionId": "prompt_version_17gnzBGJMlGPWo8r7GNz-",
+      "materialized": "prompts/gear-extractor.prompt.yaml"
+    }
+  }
+}

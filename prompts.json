@@ -1,0 +1,5 @@
+{
+  "prompts": {
+    "gear-extractor": "file:prompts/gear-extractor.prompt.yaml"
+  }
+}
