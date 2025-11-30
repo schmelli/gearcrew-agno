@@ -3,11 +3,6 @@
 import re
 from typing import Optional
 from youtube_transcript_api import YouTubeTranscriptApi
-from youtube_transcript_api._errors import (
-    TranscriptsDisabled,
-    NoTranscriptFound,
-    VideoUnavailable,
-)
 
 
 def extract_video_id(url_or_id: str) -> Optional[str]:
@@ -56,33 +51,26 @@ def get_youtube_transcript(url_or_id: str, languages: list[str] = None) -> str:
         raise ValueError(f"Could not extract video ID from: {url_or_id}")
 
     try:
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        ytt = YouTubeTranscriptApi()
 
-        transcript = None
-        for lang in languages:
-            try:
-                transcript = transcript_list.find_transcript([lang])
-                break
-            except NoTranscriptFound:
-                continue
+        # Try to fetch transcript with preferred languages
+        try:
+            transcript_data = ytt.fetch(video_id, languages=languages)
+        except Exception:
+            # Fall back to any available transcript
+            transcript_data = ytt.fetch(video_id)
 
-        if transcript is None:
-            try:
-                transcript = transcript_list.find_generated_transcript(languages)
-            except NoTranscriptFound:
-                available = list(transcript_list)
-                if available:
-                    transcript = available[0]
-                else:
-                    raise ValueError(f"No transcripts available for video: {video_id}")
-
-        transcript_data = transcript.fetch()
-        full_text = " ".join(entry["text"] for entry in transcript_data)
+        # Extract text from transcript snippets
+        full_text = " ".join(
+            snippet.text for snippet in transcript_data
+        )
         return full_text
 
-    except TranscriptsDisabled:
-        raise ValueError(f"Transcripts are disabled for video: {video_id}")
-    except VideoUnavailable:
-        raise ValueError(f"Video unavailable: {video_id}")
     except Exception as e:
-        raise ValueError(f"Error fetching transcript: {str(e)}")
+        error_msg = str(e).lower()
+        if "disabled" in error_msg:
+            raise ValueError(f"Transcripts are disabled for video: {video_id}")
+        elif "unavailable" in error_msg or "not found" in error_msg:
+            raise ValueError(f"Video unavailable or no transcript: {video_id}")
+        else:
+            raise ValueError(f"Error fetching transcript for {video_id}: {str(e)}")

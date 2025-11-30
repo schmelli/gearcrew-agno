@@ -29,19 +29,18 @@ def scrape_webpage(url: str, include_markdown: bool = True) -> str:
     """
     try:
         client = _get_firecrawl_client()
-        result = client.scrape_url(
-            url,
-            params={
-                "formats": ["markdown"] if include_markdown else ["text"],
-            },
-        )
 
-        if include_markdown and "markdown" in result:
-            return result["markdown"]
-        elif "text" in result:
-            return result["text"]
-        elif "content" in result:
-            return result["content"]
+        # New Firecrawl v2 API
+        formats = ["markdown"] if include_markdown else ["html"]
+        result = client.scrape(url, formats=formats)
+
+        # Handle Document response object
+        if hasattr(result, "markdown") and result.markdown:
+            return result.markdown
+        elif hasattr(result, "html") and result.html:
+            return result.html
+        elif hasattr(result, "raw_html") and result.raw_html:
+            return result.raw_html
         else:
             return str(result)
 
@@ -64,25 +63,30 @@ def search_web(query: str, num_results: int = 5) -> list[dict]:
     """
     try:
         client = _get_firecrawl_client()
-        result = client.search(query, params={"limit": num_results})
+
+        # New Firecrawl v2 API
+        result = client.search(query, limit=num_results)
 
         search_results = []
-        if isinstance(result, dict) and "data" in result:
-            for item in result["data"][:num_results]:
+
+        # Handle SearchData response - results are in 'web' attribute
+        if hasattr(result, "web") and result.web:
+            for item in result.web[:num_results]:
                 search_results.append(
                     {
-                        "url": item.get("url", ""),
-                        "title": item.get("title", ""),
-                        "snippet": item.get("description", item.get("snippet", "")),
+                        "url": getattr(item, "url", ""),
+                        "title": getattr(item, "title", ""),
+                        "snippet": getattr(item, "description", ""),
                     }
                 )
-        elif isinstance(result, list):
-            for item in result[:num_results]:
+        # Fall back to other possible structures
+        elif hasattr(result, "results") and result.results:
+            for item in result.results[:num_results]:
                 search_results.append(
                     {
-                        "url": item.get("url", ""),
-                        "title": item.get("title", ""),
-                        "snippet": item.get("description", item.get("snippet", "")),
+                        "url": getattr(item, "url", ""),
+                        "title": getattr(item, "title", ""),
+                        "snippet": getattr(item, "description", ""),
                     }
                 )
 
