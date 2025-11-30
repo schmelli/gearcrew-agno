@@ -25,6 +25,10 @@ from app.tools.geargraph import (
     save_gear_to_graph,
     save_insight_to_graph,
     search_graph,
+    check_video_already_processed,
+    get_previous_extraction_summary,
+    save_extraction_result,
+    link_extracted_gear_to_source,
 )
 
 load_dotenv()
@@ -174,6 +178,11 @@ AGENT_TOOLS = [
     save_gear_to_graph,
     save_insight_to_graph,
     search_graph,
+    # Source tracking tools
+    check_video_already_processed,
+    get_previous_extraction_summary,
+    save_extraction_result,
+    link_extracted_gear_to_source,
 ]
 
 

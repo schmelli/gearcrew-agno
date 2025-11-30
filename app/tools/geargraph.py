@@ -20,6 +20,11 @@ from app.db.memgraph import (
     get_graph_stats,
     merge_gear_item,
     merge_insight,
+    check_source_exists,
+    save_video_source,
+    link_gear_to_source,
+    get_all_video_sources,
+    get_gear_from_source,
 )
 
 logger = logging.getLogger(__name__)
@@ -287,6 +292,142 @@ def search_graph(query: str, limit: int = 10) -> str:
     except Exception as e:
         logger.error(f"Search error: {e}")
         return f"Search error: {str(e)}"
+
+
+def check_video_already_processed(url: str) -> str:
+    """Check if a video/source URL has already been analyzed.
+
+    Use this BEFORE fetching content to avoid re-processing videos.
+
+    Args:
+        url: The YouTube or webpage URL to check
+
+    Returns:
+        JSON with source data if already processed, or message if not found
+    """
+    try:
+        result = check_source_exists(url)
+
+        if result:
+            return (
+                f"ALREADY PROCESSED: This video was analyzed on {result.get('processed_at', 'unknown date')}. "
+                f"Found {result.get('gear_items_found', 0)} gear items and {result.get('insights_found', 0)} insights. "
+                f"Title: {result.get('title', 'Unknown')} by {result.get('channel', 'Unknown')}. "
+                f"Use get_previous_extraction_summary to see the full analysis."
+            )
+        return f"NEW SOURCE: '{url}' has not been processed before. Proceed with extraction."
+
+    except Exception as e:
+        logger.error(f"Error checking source: {e}")
+        return f"Error checking source: {str(e)}"
+
+
+def get_previous_extraction_summary(url: str) -> str:
+    """Get the full extraction summary from a previously processed source.
+
+    Args:
+        url: The source URL to get the summary for
+
+    Returns:
+        The extraction summary or error message
+    """
+    try:
+        result = check_source_exists(url)
+
+        if not result:
+            return f"No previous extraction found for '{url}'"
+
+        summary = result.get("extraction_summary", "No summary available")
+        gear_items = get_gear_from_source(url)
+
+        output = f"## Previous Extraction for: {result.get('title', 'Unknown')}\n\n"
+        output += f"**Channel:** {result.get('channel', 'Unknown')}\n"
+        output += f"**Processed:** {result.get('processed_at', 'Unknown')}\n"
+        output += f"**Gear Items Found:** {result.get('gear_items_found', 0)}\n"
+        output += f"**Insights Found:** {result.get('insights_found', 0)}\n\n"
+
+        if gear_items:
+            output += "### Extracted Gear:\n"
+            for item in gear_items:
+                output += f"- **{item.get('name')}** by {item.get('brand')} ({item.get('category', 'unknown')})\n"
+
+        output += f"\n### Full Summary:\n{summary}"
+
+        return output
+
+    except Exception as e:
+        logger.error(f"Error getting extraction summary: {e}")
+        return f"Error: {str(e)}"
+
+
+def save_extraction_result(
+    url: str,
+    title: str,
+    channel: Optional[str] = None,
+    thumbnail_url: Optional[str] = None,
+    gear_items_found: int = 0,
+    insights_found: int = 0,
+    extraction_summary: str = "",
+) -> str:
+    """Save the extraction result for a processed video/source.
+
+    Call this AFTER completing extraction to record what was found.
+
+    Args:
+        url: The source URL
+        title: Video/page title
+        channel: Channel or author name
+        thumbnail_url: Thumbnail image URL
+        gear_items_found: Number of gear items extracted
+        insights_found: Number of insights extracted
+        extraction_summary: Full markdown summary of what was extracted
+
+    Returns:
+        Success or error message
+    """
+    try:
+        success = save_video_source(
+            url=url,
+            title=title,
+            channel=channel,
+            thumbnail_url=thumbnail_url,
+            gear_items_found=gear_items_found,
+            insights_found=insights_found,
+            extraction_summary=extraction_summary,
+        )
+
+        if success:
+            return f"Successfully saved extraction result for '{title}'"
+        return "Failed to save extraction result"
+
+    except Exception as e:
+        logger.error(f"Error saving extraction result: {e}")
+        return f"Error: {str(e)}"
+
+
+def link_extracted_gear_to_source(gear_name: str, brand: str, source_url: str) -> str:
+    """Link a gear item to the source it was extracted from.
+
+    Call this after saving both the gear item and the source.
+
+    Args:
+        gear_name: Name of the gear item
+        brand: Brand of the gear item
+        source_url: URL of the source
+
+    Returns:
+        Success or error message
+    """
+    try:
+        success = link_gear_to_source(gear_name, brand, source_url)
+
+        if success:
+            return f"Linked '{gear_name}' to source"
+        return f"Failed to link gear to source"
+
+    except Exception as e:
+        logger.error(f"Error linking gear to source: {e}")
+        return f"Error: {str(e)}"
 
 
 def execute_read_query(cypher: str) -> str:

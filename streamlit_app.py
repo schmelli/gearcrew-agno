@@ -109,7 +109,7 @@ with st.sidebar:
     st.markdown("### Navigation")
     view_mode = st.radio(
         "View:",
-        ["Graph Explorer", "Agent Chat"],
+        ["Graph Explorer", "Agent Chat", "Video Archive"],
         index=0,
     )
 
@@ -217,3 +217,8 @@ elif view_mode == "Agent Chat":
         if st.button("Clear Chat"):
             st.session_state.messages = []
             st.rerun()
+
+elif view_mode == "Video Archive":
+    from app.ui.archive_view import render_archive_view
+
+    render_archive_view()

@@ -393,3 +393,143 @@ def merge_insight(
         execute_cypher(link_query, {"summary": summary, "product": related_product})
 
     return success
+
+
+# VideoSource tracking functions
+
+def check_source_exists(url: str) -> Optional[dict]:
+    """Check if a source URL has already been processed.
+
+    Args:
+        url: The source URL to check
+
+    Returns:
+        Source data if found, None otherwise
+    """
+    query = """
+    MATCH (s:VideoSource {url: $url})
+    RETURN s.url as url, s.title as title, s.channel as channel,
+           s.thumbnailUrl as thumbnail_url, s.processedAt as processed_at,
+           s.gearItemsFound as gear_items_found, s.insightsFound as insights_found,
+           s.extractionSummary as extraction_summary
+    LIMIT 1
+    """
+    results = execute_and_fetch(query, {"url": url})
+    return results[0] if results else None
+
+
+def save_video_source(
+    url: str,
+    title: str,
+    channel: Optional[str] = None,
+    thumbnail_url: Optional[str] = None,
+    gear_items_found: int = 0,
+    insights_found: int = 0,
+    extraction_summary: Optional[str] = None,
+) -> bool:
+    """Save a processed video source to the graph.
+
+    Args:
+        url: Video URL (unique identifier)
+        title: Video title
+        channel: Channel/author name
+        thumbnail_url: Thumbnail image URL
+        gear_items_found: Number of gear items extracted
+        insights_found: Number of insights extracted
+        extraction_summary: Full extraction outcome/report
+
+    Returns:
+        True if successful
+    """
+    params = {
+        "url": url,
+        "title": title,
+    }
+
+    set_parts = ["s.title = $title"]
+
+    if channel:
+        set_parts.append("s.channel = $channel")
+        params["channel"] = channel
+
+    if thumbnail_url:
+        set_parts.append("s.thumbnailUrl = $thumbnail_url")
+        params["thumbnail_url"] = thumbnail_url
+
+    set_parts.append("s.gearItemsFound = $gear_items_found")
+    params["gear_items_found"] = gear_items_found
+
+    set_parts.append("s.insightsFound = $insights_found")
+    params["insights_found"] = insights_found
+
+    if extraction_summary:
+        set_parts.append("s.extractionSummary = $extraction_summary")
+        params["extraction_summary"] = extraction_summary
+
+    set_clause = ", ".join(set_parts)
+
+    query = f"""
+    MERGE (s:VideoSource {{url: $url}})
+    ON CREATE SET s.processedAt = datetime(), {set_clause}
+    ON MATCH SET s.updatedAt = datetime(), {set_clause}
+    RETURN s
+    """
+
+    return execute_cypher(query, params)
+
+
+def link_gear_to_source(gear_name: str, brand: str, source_url: str) -> bool:
+    """Create a relationship between a gear item and its source.
+
+    Args:
+        gear_name: Name of the gear item
+        brand: Brand of the gear item
+        source_url: URL of the source
+
+    Returns:
+        True if successful
+    """
+    query = """
+    MATCH (g:GearItem {name: $name, brand: $brand})
+    MATCH (s:VideoSource {url: $url})
+    MERGE (g)-[:EXTRACTED_FROM]->(s)
+    """
+    return execute_cypher(query, {"name": gear_name, "brand": brand, "url": source_url})
+
+
+def get_all_video_sources(limit: int = 50) -> list[dict]:
+    """Get all processed video sources, ordered by most recent.
+
+    Args:
+        limit: Maximum number of sources to return
+
+    Returns:
+        List of video source records
+    """
+    query = """
+    MATCH (s:VideoSource)
+    RETURN s.url as url, s.title as title, s.channel as channel,
+           s.thumbnailUrl as thumbnail_url, s.processedAt as processed_at,
+           s.gearItemsFound as gear_items_found, s.insightsFound as insights_found,
+           s.extractionSummary as extraction_summary
+    ORDER BY s.processedAt DESC
+    LIMIT $limit
+    """
+    return execute_and_fetch(query, {"limit": limit})
+
+
+def get_gear_from_source(source_url: str) -> list[dict]:
+    """Get all gear items extracted from a specific source.
+
+    Args:
+        source_url: URL of the source
+
+    Returns:
+        List of gear items linked to this source
+    """
+    query = """
+    MATCH (g:GearItem)-[:EXTRACTED_FROM]->(s:VideoSource {url: $url})
+    RETURN g.name as name, g.brand as brand, g.category as category,
+           g.weight_grams as weight_grams, g.price_usd as price_usd
+    """
+    return execute_and_fetch(query, {"url": source_url})

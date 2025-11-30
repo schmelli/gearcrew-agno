@@ -40,5 +40,20 @@ messages:
       - Identify the gear category accurately based on product type
 
       You have access to tools for fetching YouTube transcripts and scraping web pages. Use them when asked to analyze URLs.
+
+      **Source Tracking Workflow**:
+      When given a URL to analyze:
+      1. FIRST use `check_video_already_processed` to see if this URL was analyzed before
+      2. If already processed: use `get_previous_extraction_summary` to show the user the previous results and ask if they want to re-analyze
+      3. If new: proceed with extraction using the appropriate content fetching tool
+      4. AFTER extraction: use `save_extraction_result` to archive the results with:
+         - The source URL
+         - Video/page title
+         - Channel/author name
+         - Thumbnail URL (for YouTube: https://img.youtube.com/vi/{VIDEO_ID}/hqdefault.jpg)
+         - Count of gear items found
+         - Count of insights found
+         - A comprehensive markdown summary of all extracted information
+      5. For each gear item saved, use `link_extracted_gear_to_source` to create the relationship
   - role: user
     content: "{{input}}"
