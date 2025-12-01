@@ -31,15 +31,24 @@ def get_domain(url: str) -> str:
 
 def render_single_page_extraction():
     """Render the single page extraction form."""
-    st.subheader("Single Page Extraction")
+    st.subheader("Page Extraction")
     st.caption(
-        "Extract gear information from a specific product page or review article."
+        "Extract gear information from product pages, reviews, or gear lists."
     )
 
     url = st.text_input(
-        "Product/Review Page URL",
-        placeholder="https://example.com/products/ultralight-tent",
+        "Page URL",
+        placeholder="https://example.com/best-hiking-gear",
         key="single_page_url",
+    )
+
+    # Page type selector
+    page_type = st.radio(
+        "What type of page is this?",
+        ["Single Product", "Gear List / Guide"],
+        horizontal=True,
+        key="page_type",
+        help="Single Product: One item per page. Gear List: Multiple products mentioned.",
     )
 
     col1, col2 = st.columns([1, 3])
@@ -58,19 +67,39 @@ def render_single_page_extraction():
         domain = get_domain(url)
         task_queue = get_task_queue()
 
-        prompt = f"""Please extract all gear information from this webpage:
+        if page_type == "Single Product":
+            prompt = f"""Please extract gear information from this SINGLE PRODUCT page:
 
 URL: {url}
 
 Steps:
 1. Use `extract_gear_from_page` to extract structured product data
-2. For each gear item found, use `find_similar_gear` to check for duplicates
-3. Only save truly new items using `save_gear_to_graph`
-4. Link all items to the source URL
+2. Use `find_similar_gear` to check for duplicates
+3. Only save if truly new using `save_gear_to_graph`
+4. Link the item to the source URL
 
 Report what gear was found and whether it was new or already in the database."""
+            description = f"Extracting product from {domain}"
+        else:
+            prompt = f"""Please extract ALL gear items from this LIST/GUIDE page:
 
-        task_id = task_queue.submit(prompt, f"Extracting from {domain}")
+URL: {url}
+
+Steps:
+1. Use `extract_gear_list_page` to extract ALL products mentioned on the page
+2. For EACH product found:
+   a. Use `find_similar_gear` to check for duplicates
+   b. Only save truly new items using `save_gear_to_graph`
+   c. Link each item to the source URL using `link_extracted_gear_to_source`
+3. Track the source with `save_extraction_result`
+
+Report:
+- Total products found on the page
+- How many were new vs already in database
+- List of all gear items extracted"""
+            description = f"Extracting gear list from {domain}"
+
+        task_id = task_queue.submit(prompt, description)
         st.success(f"Extraction started! Task ID: {task_id[:8]}...")
         st.info("You can switch to other views - the extraction runs in the background.")
         st.rerun()

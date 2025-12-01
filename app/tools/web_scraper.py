@@ -211,6 +211,94 @@ def map_website(url: str, max_pages: int = 100) -> dict:
         raise ValueError(f"Failed to map website {url}: {str(e)}")
 
 
+def extract_multiple_products(url: str) -> dict:
+    """Extract multiple product references from a list/guide page.
+
+    Uses Firecrawl's extract() with an array schema to pull ALL products
+    mentioned on pages like gear guides, comparison articles, or best-of lists.
+
+    Args:
+        url: URL of the gear list/guide page
+
+    Returns:
+        Dictionary with 'products' array containing basic info for each item
+
+    Raises:
+        ValueError: If extraction fails
+    """
+    schema = {
+        "type": "object",
+        "properties": {
+            "products": {
+                "type": "array",
+                "description": "All hiking/backpacking gear products mentioned on the page",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "product_name": {
+                            "type": "string",
+                            "description": "Full product name including model"
+                        },
+                        "brand": {
+                            "type": "string",
+                            "description": "Brand/manufacturer name"
+                        },
+                        "category": {
+                            "type": "string",
+                            "description": "Gear category (backpack, tent, boots, etc.)"
+                        },
+                        "price": {
+                            "type": "number",
+                            "description": "Price in USD if mentioned"
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "Brief description or why it's recommended"
+                        },
+                        "affiliate_url": {
+                            "type": "string",
+                            "description": "Link to product (Amazon, REI, etc.)"
+                        }
+                    },
+                    "required": ["product_name", "brand"]
+                }
+            },
+            "page_title": {
+                "type": "string",
+                "description": "Title of the page/article"
+            },
+            "total_products": {
+                "type": "number",
+                "description": "Total number of products found"
+            }
+        },
+        "required": ["products"]
+    }
+
+    try:
+        client = _get_firecrawl_client()
+
+        result = client.extract(
+            urls=[url],
+            schema=schema,
+            prompt="Extract ALL hiking, backpacking, and outdoor gear products mentioned on this page. Include every product with its brand, category, and any price or link information."
+        )
+
+        # Handle response
+        if hasattr(result, 'data') and result.data:
+            data = result.data[0] if isinstance(result.data, list) else result.data
+            return data
+        elif isinstance(result, dict):
+            return result.get('data', result)
+        elif isinstance(result, list) and result:
+            return result[0]
+
+        return {"products": [], "total_products": 0}
+
+    except Exception as e:
+        raise ValueError(f"Failed to extract products from {url}: {str(e)}")
+
+
 def extract_product_data(url: str, schema: dict = None) -> dict:
     """Extract structured product data from a webpage.
 

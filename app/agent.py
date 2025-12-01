@@ -26,6 +26,7 @@ from app.tools.web_scraper import (
     search_web,
     map_website,
     extract_product_data,
+    extract_multiple_products,
     batch_extract_products,
 )
 from app.tools.geargraph import (
@@ -290,10 +291,12 @@ def discover_product_pages(website_url: str) -> str:
 
 
 def extract_gear_from_page(url: str) -> str:
-    """Extract structured gear information from a product page.
+    """Extract structured gear information from a SINGLE product page.
 
-    Uses AI-powered extraction to pull product data from any gear page.
-    Works with manufacturer sites, review sites, and retailers.
+    Best for: Individual product pages on manufacturer or retailer sites.
+    NOT for: List pages, gear guides, or "best of" articles with multiple products.
+
+    For pages with multiple products, use `extract_gear_list_page` instead.
 
     Args:
         url: URL of the product page to extract from
@@ -336,6 +339,69 @@ def extract_gear_from_page(url: str) -> str:
         return f"Error extracting product data: {str(e)}"
 
 
+def extract_gear_list_page(url: str) -> str:
+    """Extract ALL gear items from a list page, gear guide, or comparison article.
+
+    Use this for pages that mention MULTIPLE products, such as:
+    - "Best hiking gear" guides
+    - Gear comparison articles
+    - "What's in my pack" posts
+    - Product roundups and recommendations
+
+    For single product pages, use `extract_gear_from_page` instead.
+
+    Args:
+        url: URL of the gear list/guide page
+
+    Returns:
+        List of all products found with basic info for each
+    """
+    try:
+        data = extract_multiple_products(url)
+
+        products = data.get('products', [])
+        page_title = data.get('page_title', 'Unknown Page')
+
+        if not products:
+            return f"No products found on {url}. The page may not be a gear list, or try using fetch_webpage_content to analyze manually."
+
+        output = [f"## Gear List Extraction: {page_title}\n"]
+        output.append(f"**Source:** {url}")
+        output.append(f"**Products Found:** {len(products)}\n")
+        output.append("---\n")
+
+        for i, product in enumerate(products, 1):
+            name = product.get('product_name', 'Unknown')
+            brand = product.get('brand', 'Unknown')
+            category = product.get('category', '')
+            price = product.get('price')
+            desc = product.get('description', '')
+            link = product.get('affiliate_url', '')
+
+            output.append(f"### {i}. {brand} {name}")
+            if category:
+                output.append(f"**Category:** {category}")
+            if price:
+                output.append(f"**Price:** ${price}")
+            if desc:
+                output.append(f"**Notes:** {desc}")
+            if link:
+                output.append(f"**Link:** {link}")
+            output.append("")
+
+        output.append("---")
+        output.append(f"**Total: {len(products)} products found**")
+        output.append("\n**Next steps:**")
+        output.append("- Use `find_similar_gear` to check each item for duplicates")
+        output.append("- Use `save_gear_to_graph` to save new items")
+        output.append("- Link all items to source with `link_extracted_gear_to_source`")
+
+        return "\n".join(output)
+
+    except ValueError as e:
+        return f"Error extracting gear list: {str(e)}"
+
+
 # All available tools for agents
 AGENT_TOOLS = [
     # Content fetching tools
@@ -362,6 +428,7 @@ AGENT_TOOLS = [
     # Website extraction tools
     discover_product_pages,  # Map manufacturer sites to find product URLs
     extract_gear_from_page,  # Extract structured data from single product page
+    extract_gear_list_page,  # Extract ALL products from list/guide pages
     # Glossary tools
     save_glossary_term,
     lookup_glossary_term,
