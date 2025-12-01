@@ -354,7 +354,7 @@ def extract_gear_list_page(url: str) -> str:
         url: URL of the gear list/guide page
 
     Returns:
-        List of all products found with basic info for each
+        List of all products found with detailed specs for each
     """
     try:
         data = extract_multiple_products(url)
@@ -374,26 +374,76 @@ def extract_gear_list_page(url: str) -> str:
             name = product.get('product_name', 'Unknown')
             brand = product.get('brand', 'Unknown')
             category = product.get('category', '')
-            price = product.get('price')
+            price = product.get('price_usd') or product.get('price')
             desc = product.get('description', '')
-            link = product.get('affiliate_url', '')
+            link = product.get('product_url') or product.get('affiliate_url', '')
+            weight_g = product.get('weight_grams')
+            weight_oz = product.get('weight_oz')
+            materials = product.get('materials', [])
+            features = product.get('features', [])
 
             output.append(f"### {i}. {brand} {name}")
             if category:
                 output.append(f"**Category:** {category}")
             if price:
                 output.append(f"**Price:** ${price}")
+
+            # Weight info
+            weight_str = []
+            if weight_g:
+                weight_str.append(f"{weight_g}g")
+            if weight_oz:
+                weight_str.append(f"{weight_oz}oz")
+            if weight_str:
+                output.append(f"**Weight:** {' / '.join(weight_str)}")
+
+            # Category-specific specs
+            specs = []
+            if product.get('volume_liters'):
+                specs.append(f"Volume: {product['volume_liters']}L")
+            if product.get('temp_rating_f'):
+                specs.append(f"Temp Rating: {product['temp_rating_f']}°F")
+            if product.get('r_value'):
+                specs.append(f"R-Value: {product['r_value']}")
+            if product.get('capacity_persons'):
+                specs.append(f"Capacity: {product['capacity_persons']}P")
+            if product.get('fill_power'):
+                specs.append(f"Fill Power: {product['fill_power']}")
+            if product.get('waterproof_rating'):
+                specs.append(f"Waterproof: {product['waterproof_rating']}")
+            if product.get('lumens'):
+                specs.append(f"Lumens: {product['lumens']}")
+            if product.get('fuel_type'):
+                specs.append(f"Fuel: {product['fuel_type']}")
+            if product.get('filter_type'):
+                specs.append(f"Filter: {product['filter_type']}")
+            if specs:
+                output.append(f"**Specs:** {', '.join(specs)}")
+
+            if materials:
+                output.append(f"**Materials:** {', '.join(materials)}")
+            if features:
+                output.append(f"**Features:** {', '.join(features[:5])}")  # Limit to 5
             if desc:
-                output.append(f"**Notes:** {desc}")
+                # Truncate long descriptions
+                desc_short = desc[:200] + "..." if len(desc) > 200 else desc
+                output.append(f"**Description:** {desc_short}")
             if link:
                 output.append(f"**Link:** {link}")
             output.append("")
 
         output.append("---")
         output.append(f"**Total: {len(products)} products found**")
+
+        # Stats on data quality
+        with_weight = sum(1 for p in products if p.get('weight_grams') or p.get('weight_oz'))
+        with_price = sum(1 for p in products if p.get('price_usd') or p.get('price'))
+        with_desc = sum(1 for p in products if p.get('description'))
+        output.append(f"\n**Data Quality:** {with_weight}/{len(products)} have weight, {with_price}/{len(products)} have price, {with_desc}/{len(products)} have description")
+
         output.append("\n**Next steps:**")
         output.append("- Use `find_similar_gear` to check each item for duplicates")
-        output.append("- Use `save_gear_to_graph` to save new items")
+        output.append("- Use `save_gear_to_graph` with ALL available fields (description, features, weight_grams, category-specific specs)")
         output.append("- Link all items to source with `link_extracted_gear_to_source`")
 
         return "\n".join(output)

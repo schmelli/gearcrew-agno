@@ -214,14 +214,15 @@ def map_website(url: str, max_pages: int = 100) -> dict:
 def extract_multiple_products(url: str) -> dict:
     """Extract multiple product references from a list/guide page.
 
-    Uses Firecrawl's extract() with an array schema to pull ALL products
+    Uses Firecrawl's extract() with a comprehensive schema to pull ALL products
     mentioned on pages like gear guides, comparison articles, or best-of lists.
+    Captures detailed specs including weight, materials, and category-specific data.
 
     Args:
         url: URL of the gear list/guide page
 
     Returns:
-        Dictionary with 'products' array containing basic info for each item
+        Dictionary with 'products' array containing detailed info for each item
 
     Raises:
         ValueError: If extraction fails
@@ -231,13 +232,13 @@ def extract_multiple_products(url: str) -> dict:
         "properties": {
             "products": {
                 "type": "array",
-                "description": "All hiking/backpacking gear products mentioned on the page",
+                "description": "All hiking/backpacking gear products on the page",
                 "items": {
                     "type": "object",
                     "properties": {
                         "product_name": {
                             "type": "string",
-                            "description": "Full product name including model"
+                            "description": "Full product name including model number"
                         },
                         "brand": {
                             "type": "string",
@@ -245,19 +246,74 @@ def extract_multiple_products(url: str) -> dict:
                         },
                         "category": {
                             "type": "string",
-                            "description": "Gear category (backpack, tent, boots, etc.)"
-                        },
-                        "price": {
-                            "type": "number",
-                            "description": "Price in USD if mentioned"
+                            "description": "Gear category: backpack, tent, sleeping_bag, sleeping_pad, stove, water_filter, headlamp, jacket, boots, trekking_poles, cookware, or other"
                         },
                         "description": {
                             "type": "string",
-                            "description": "Brief description or why it's recommended"
+                            "description": "Product description, why it's recommended, or key selling points"
                         },
-                        "affiliate_url": {
+                        "price_usd": {
+                            "type": "number",
+                            "description": "Price in USD"
+                        },
+                        "weight_grams": {
+                            "type": "number",
+                            "description": "Weight in grams (convert from oz if needed: 1oz = 28.35g)"
+                        },
+                        "weight_oz": {
+                            "type": "number",
+                            "description": "Weight in ounces if specified"
+                        },
+                        "materials": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Materials used (nylon, Dyneema, down, synthetic, etc.)"
+                        },
+                        "features": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Key features mentioned"
+                        },
+                        "product_url": {
                             "type": "string",
-                            "description": "Link to product (Amazon, REI, etc.)"
+                            "description": "Link to product page (Amazon, REI, manufacturer)"
+                        },
+                        # Category-specific fields
+                        "volume_liters": {
+                            "type": "number",
+                            "description": "Volume in liters (for backpacks)"
+                        },
+                        "temp_rating_f": {
+                            "type": "number",
+                            "description": "Temperature rating in Fahrenheit (sleeping bags)"
+                        },
+                        "r_value": {
+                            "type": "number",
+                            "description": "R-value insulation rating (sleeping pads)"
+                        },
+                        "capacity_persons": {
+                            "type": "number",
+                            "description": "Person capacity (tents)"
+                        },
+                        "fill_power": {
+                            "type": "number",
+                            "description": "Down fill power (sleeping bags, jackets)"
+                        },
+                        "waterproof_rating": {
+                            "type": "string",
+                            "description": "Waterproof rating (tents, jackets)"
+                        },
+                        "lumens": {
+                            "type": "number",
+                            "description": "Light output in lumens (headlamps)"
+                        },
+                        "fuel_type": {
+                            "type": "string",
+                            "description": "Fuel type (stoves): canister, alcohol, wood, etc."
+                        },
+                        "filter_type": {
+                            "type": "string",
+                            "description": "Filter type (water filters): squeeze, pump, gravity, UV"
                         }
                     },
                     "required": ["product_name", "brand"]
@@ -281,7 +337,19 @@ def extract_multiple_products(url: str) -> dict:
         result = client.extract(
             urls=[url],
             schema=schema,
-            prompt="Extract ALL hiking, backpacking, and outdoor gear products mentioned on this page. Include every product with its brand, category, and any price or link information."
+            prompt="""Extract ALL hiking, backpacking, and outdoor gear products from this page.
+For EACH product, capture as much detail as possible:
+- Full product name and brand
+- Category (backpack, tent, sleeping_bag, sleeping_pad, stove, water_filter, headlamp, jacket, boots, etc.)
+- Description or why it's recommended
+- Price in USD
+- Weight (in grams AND/OR ounces - convert if needed: 1oz = 28.35g)
+- Materials used
+- Key features
+- Product/affiliate URL
+- Category-specific specs: volume (backpacks), temp rating (sleeping bags), R-value (pads), capacity (tents), lumens (headlamps), etc.
+
+Be thorough - extract EVERY product mentioned, even if some details are missing."""
         )
 
         # Handle response

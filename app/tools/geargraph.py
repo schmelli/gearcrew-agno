@@ -221,10 +221,29 @@ def save_gear_to_graph(
     image_url: Optional[str] = None,
     materials: Optional[str] = None,
     source_url: Optional[str] = None,
+    description: Optional[str] = None,
+    features: Optional[str] = None,
+    # Category-specific specs (pass as needed based on category)
+    volume_liters: Optional[float] = None,
+    temp_rating_f: Optional[int] = None,
+    temp_rating_c: Optional[int] = None,
+    r_value: Optional[float] = None,
+    capacity_persons: Optional[int] = None,
+    packed_weight_grams: Optional[int] = None,
+    packed_size: Optional[str] = None,
+    fill_power: Optional[int] = None,
+    fill_weight_grams: Optional[int] = None,
+    waterproof_rating: Optional[str] = None,
+    lumens: Optional[int] = None,
+    burn_time: Optional[str] = None,
+    fuel_type: Optional[str] = None,
+    filter_type: Optional[str] = None,
+    flow_rate: Optional[str] = None,
 ) -> str:
-    """Save a gear item to the GearGraph database.
+    """Save a gear item to the GearGraph database with full specifications.
 
     Uses MERGE to prevent duplicates - will update existing records.
+    Pass category-specific parameters based on the gear type.
 
     Args:
         name: Product name (required)
@@ -236,15 +255,30 @@ def save_gear_to_graph(
         image_url: Product image URL
         materials: Comma-separated list of materials
         source_url: URL where this info was found
+        description: Product description
+        features: Comma-separated list of key features
+
+        Category-specific (use based on gear type):
+        - Backpacks: volume_liters
+        - Sleeping bags: temp_rating_f, temp_rating_c, fill_power, fill_weight_grams
+        - Sleeping pads: r_value
+        - Tents: capacity_persons, packed_weight_grams, packed_size, waterproof_rating
+        - Headlamps: lumens, burn_time
+        - Stoves: fuel_type, burn_time
+        - Water filters: filter_type, flow_rate
 
     Returns:
         Success or error message
     """
     try:
-        # Convert materials string to list if provided
+        # Convert comma-separated strings to lists
         materials_list = None
         if materials:
             materials_list = [m.strip() for m in materials.split(",")]
+
+        features_list = None
+        if features:
+            features_list = [f.strip() for f in features.split(",")]
 
         success = merge_gear_item(
             name=name,
@@ -256,6 +290,23 @@ def save_gear_to_graph(
             image_url=image_url,
             materials=materials_list,
             source_url=source_url,
+            description=description,
+            features=features_list,
+            volume_liters=volume_liters,
+            temp_rating_f=temp_rating_f,
+            temp_rating_c=temp_rating_c,
+            r_value=r_value,
+            capacity_persons=capacity_persons,
+            packed_weight_grams=packed_weight_grams,
+            packed_size=packed_size,
+            fill_power=fill_power,
+            fill_weight_grams=fill_weight_grams,
+            waterproof_rating=waterproof_rating,
+            lumens=lumens,
+            burn_time=burn_time,
+            fuel_type=fuel_type,
+            filter_type=filter_type,
+            flow_rate=flow_rate,
         )
 
         if success:

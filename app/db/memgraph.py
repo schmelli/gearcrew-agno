@@ -271,10 +271,28 @@ def merge_gear_item(
     image_url: Optional[str] = None,
     materials: Optional[list[str]] = None,
     source_url: Optional[str] = None,
+    description: Optional[str] = None,
+    features: Optional[list[str]] = None,
+    # Category-specific specs
+    volume_liters: Optional[float] = None,  # Backpacks
+    temp_rating_f: Optional[int] = None,  # Sleeping bags
+    temp_rating_c: Optional[int] = None,  # Sleeping bags
+    r_value: Optional[float] = None,  # Sleeping pads
+    capacity_persons: Optional[int] = None,  # Tents
+    packed_weight_grams: Optional[int] = None,  # Tents, bags
+    packed_size: Optional[str] = None,  # Packed dimensions
+    fill_power: Optional[int] = None,  # Down products
+    fill_weight_grams: Optional[int] = None,  # Down products
+    waterproof_rating: Optional[str] = None,  # Jackets, tents
+    lumens: Optional[int] = None,  # Headlamps
+    burn_time: Optional[str] = None,  # Stoves, headlamps
+    fuel_type: Optional[str] = None,  # Stoves
+    filter_type: Optional[str] = None,  # Water filters
+    flow_rate: Optional[str] = None,  # Water filters
 ) -> bool:
     """Merge a gear item into the graph (create or update).
 
-    Uses MERGE to prevent duplicates.
+    Uses MERGE to prevent duplicates. Supports category-specific properties.
 
     Args:
         name: Product name
@@ -286,6 +304,23 @@ def merge_gear_item(
         image_url: Product image URL
         materials: List of materials
         source_url: URL where this was discovered
+        description: Product description
+        features: List of key features
+        volume_liters: Volume in liters (backpacks)
+        temp_rating_f: Temperature rating Fahrenheit (sleeping bags)
+        temp_rating_c: Temperature rating Celsius (sleeping bags)
+        r_value: Insulation R-value (sleeping pads)
+        capacity_persons: Person capacity (tents)
+        packed_weight_grams: Packed weight (tents, sleeping bags)
+        packed_size: Packed dimensions as string
+        fill_power: Down fill power (sleeping bags, jackets)
+        fill_weight_grams: Down fill weight in grams
+        waterproof_rating: Waterproof rating (tents, jackets)
+        lumens: Light output (headlamps)
+        burn_time: Burn time (stoves, headlamps)
+        fuel_type: Fuel type (stoves)
+        filter_type: Filter type (water filters)
+        flow_rate: Flow rate (water filters)
 
     Returns:
         True if successful
@@ -301,29 +336,38 @@ def merge_gear_item(
     set_parts = []
     params = {"name": name, "brand": brand, "category": category}
 
-    if weight_grams is not None:
-        set_parts.append("g.weight_grams = $weight_grams")
-        params["weight_grams"] = weight_grams
+    # Core properties
+    optional_props = [
+        ("weight_grams", weight_grams, "g.weight_grams"),
+        ("price_usd", price_usd, "g.price_usd"),
+        ("product_url", product_url, "g.productUrl"),
+        ("image_url", image_url, "g.imageUrl"),
+        ("materials", materials, "g.materials"),
+        ("source_url", source_url, "g.sourceUrl"),
+        ("description", description, "g.description"),
+        ("features", features, "g.features"),
+        # Category-specific
+        ("volume_liters", volume_liters, "g.volumeLiters"),
+        ("temp_rating_f", temp_rating_f, "g.tempRatingF"),
+        ("temp_rating_c", temp_rating_c, "g.tempRatingC"),
+        ("r_value", r_value, "g.rValue"),
+        ("capacity_persons", capacity_persons, "g.capacityPersons"),
+        ("packed_weight_grams", packed_weight_grams, "g.packedWeightGrams"),
+        ("packed_size", packed_size, "g.packedSize"),
+        ("fill_power", fill_power, "g.fillPower"),
+        ("fill_weight_grams", fill_weight_grams, "g.fillWeightGrams"),
+        ("waterproof_rating", waterproof_rating, "g.waterproofRating"),
+        ("lumens", lumens, "g.lumens"),
+        ("burn_time", burn_time, "g.burnTime"),
+        ("fuel_type", fuel_type, "g.fuelType"),
+        ("filter_type", filter_type, "g.filterType"),
+        ("flow_rate", flow_rate, "g.flowRate"),
+    ]
 
-    if price_usd is not None:
-        set_parts.append("g.price_usd = $price_usd")
-        params["price_usd"] = price_usd
-
-    if product_url:
-        set_parts.append("g.productUrl = $product_url")
-        params["product_url"] = product_url
-
-    if image_url:
-        set_parts.append("g.imageUrl = $image_url")
-        params["image_url"] = image_url
-
-    if materials:
-        set_parts.append("g.materials = $materials")
-        params["materials"] = materials
-
-    if source_url:
-        set_parts.append("g.sourceUrl = $source_url")
-        params["source_url"] = source_url
+    for param_name, value, prop_path in optional_props:
+        if value is not None:
+            set_parts.append(f"{prop_path} = ${param_name}")
+            params[param_name] = value
 
     set_clause = ", ".join(set_parts) if set_parts else ""
 
