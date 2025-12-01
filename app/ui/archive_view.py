@@ -75,7 +75,7 @@ def render_source_card(source: dict, expanded: bool = False):
 
         with col1:
             if thumbnail_url:
-                st.image(thumbnail_url, use_container_width=True)
+                st.image(thumbnail_url, width="stretch")
             else:
                 st.markdown("**No Thumbnail**")
 

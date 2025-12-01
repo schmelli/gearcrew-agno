@@ -613,7 +613,16 @@ Instructions:
 4. Extract valuable knowledge facts, tips, and reviews
 5. IMPORTANT: Check for duplicates using find_similar_gear before saving any new gear
 6. Save all extracted gear items and insights to the database
-7. Record this video as processed using save_extraction_result
+7. Link each gear item to this source using link_extracted_gear_to_source
+8. **CRITICAL - MUST DO**: Call save_extraction_result at the end with:
+   - url: "{source_url}"
+   - title: The video/page title
+   - channel: The channel or author name
+   - gear_items_found: Count of gear items extracted
+   - insights_found: Count of insights extracted
+   - extraction_summary: A markdown summary of what was found
+
+This final step is REQUIRED - without it, the video won't appear in the archive!
 
 Please proceed with the extraction."""
 
