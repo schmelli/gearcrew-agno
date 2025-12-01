@@ -35,6 +35,19 @@ from app.db.memgraph import (
     link_gear_to_glossary_term,
     find_gear_by_glossary_term,
     import_glossary_terms,
+    # Provenance and extended data functions
+    add_field_provenance,
+    get_field_provenance,
+    set_gear_attribute,
+    get_gear_attributes,
+    save_gear_comparison,
+    save_gear_alternative,
+    get_gear_comparisons,
+    get_gear_alternatives,
+    save_gear_opinion,
+    get_gear_opinions,
+    save_usage_context,
+    get_gear_usage_contexts,
 )
 
 logger = logging.getLogger(__name__)
@@ -943,4 +956,504 @@ def import_glossary_from_json(json_data: str) -> str:
         return f"Invalid JSON: {str(e)}"
     except Exception as e:
         logger.error(f"Error importing glossary: {e}")
+        return f"Error: {str(e)}"
+
+
+# ============================================================================
+# Provenance Tracking Tools
+# ============================================================================
+
+
+def track_field_source(
+    gear_name: str,
+    brand: str,
+    field_name: str,
+    source_url: str,
+    confidence: float = 1.0,
+) -> str:
+    """Track which source provided a specific piece of data.
+
+    **IMPORTANT**: Call this AFTER saving gear data to record where each field came from.
+    This enables full data provenance tracking - knowing exactly which source provided
+    which pieces of information.
+
+    Args:
+        gear_name: Name of the gear item
+        brand: Brand of the gear item
+        field_name: The field that was populated (e.g., "weight_grams", "price_usd")
+        source_url: The URL where this data was found
+        confidence: How confident we are in this data (0.0-1.0)
+
+    Returns:
+        Success or error message
+    """
+    try:
+        success = add_field_provenance(
+            gear_name=gear_name,
+            brand=brand,
+            field_name=field_name,
+            source_url=source_url,
+            confidence=confidence,
+        )
+
+        if success:
+            return f"Tracked source for {field_name} on '{gear_name}' by {brand}"
+        return "Failed to track field source"
+
+    except Exception as e:
+        logger.error(f"Error tracking field source: {e}")
+        return f"Error: {str(e)}"
+
+
+def get_data_sources(gear_name: str, brand: str) -> str:
+    """Get the provenance map showing which sources provided which data.
+
+    Shows exactly where each piece of information came from for a gear item.
+
+    Args:
+        gear_name: Name of the gear item
+        brand: Brand of the gear item
+
+    Returns:
+        Formatted provenance report
+    """
+    try:
+        sources = get_field_provenance(gear_name, brand)
+
+        if not sources:
+            return f"No provenance data tracked for '{gear_name}' by {brand}"
+
+        output = [f"## Data Sources for {gear_name} by {brand}\n"]
+
+        for src in sources:
+            conf_pct = int(src.get("confidence", 1.0) * 100)
+            output.append(
+                f"- **{src['field']}**: [{src['source_url']}] ({conf_pct}% confidence)"
+            )
+
+        return "\n".join(output)
+
+    except Exception as e:
+        logger.error(f"Error getting field provenance: {e}")
+        return f"Error: {str(e)}"
+
+
+# ============================================================================
+# Dynamic Attribute Tools
+# ============================================================================
+
+
+def save_dynamic_attribute(
+    gear_name: str,
+    brand: str,
+    attribute_name: str,
+    attribute_value: str,
+    source_url: Optional[str] = None,
+) -> str:
+    """Save a dynamic attribute that isn't part of the standard schema.
+
+    Use this for any data you extract that doesn't fit standard fields.
+    Examples: color_options, warranty_years, country_of_manufacture, etc.
+
+    The attribute will be stored directly on the gear item node.
+
+    Args:
+        gear_name: Name of the gear item
+        brand: Brand of the gear item
+        attribute_name: Name for the attribute (use snake_case)
+        attribute_value: The value to store
+        source_url: Optional source URL for provenance tracking
+
+    Returns:
+        Success or error message
+    """
+    try:
+        success = set_gear_attribute(
+            gear_name=gear_name,
+            brand=brand,
+            attr_name=attribute_name,
+            attr_value=attribute_value,
+            source_url=source_url,
+        )
+
+        if success:
+            return f"Saved attribute '{attribute_name}' = '{attribute_value}' on '{gear_name}'"
+        return f"Failed to save attribute - ensure the gear item exists"
+
+    except Exception as e:
+        logger.error(f"Error saving dynamic attribute: {e}")
+        return f"Error: {str(e)}"
+
+
+def get_all_gear_data(gear_name: str, brand: str) -> str:
+    """Get ALL data for a gear item including dynamic attributes.
+
+    Returns all properties stored on the gear item node, including
+    both standard schema fields and any dynamic attributes.
+
+    Args:
+        gear_name: Name of the gear item
+        brand: Brand of the gear item
+
+    Returns:
+        JSON with all gear properties
+    """
+    try:
+        attrs = get_gear_attributes(gear_name, brand)
+
+        if not attrs:
+            return f"Gear item '{gear_name}' by {brand} not found"
+
+        return json.dumps(attrs, default=str, indent=2)
+
+    except Exception as e:
+        logger.error(f"Error getting gear attributes: {e}")
+        return f"Error: {str(e)}"
+
+
+# ============================================================================
+# Comparison and Alternative Tools
+# ============================================================================
+
+
+def save_product_comparison(
+    gear1_name: str,
+    gear1_brand: str,
+    gear2_name: str,
+    gear2_brand: str,
+    comparison_type: str,
+    notes: Optional[str] = None,
+    winner: Optional[str] = None,
+    source_url: Optional[str] = None,
+) -> str:
+    """Save a comparison between two gear items.
+
+    Record when a source compares two products. This builds a comparison
+    graph that helps users understand how products relate.
+
+    Args:
+        gear1_name: First product name
+        gear1_brand: First product brand
+        gear2_name: Second product name
+        gear2_brand: Second product brand
+        comparison_type: What's being compared (weight, price, durability, warmth, etc.)
+        notes: Details about the comparison
+        winner: Which product "wins" this comparison (optional)
+        source_url: Where this comparison was found
+
+    Returns:
+        Success or error message
+    """
+    try:
+        success = save_gear_comparison(
+            gear1_name=gear1_name,
+            gear1_brand=gear1_brand,
+            gear2_name=gear2_name,
+            gear2_brand=gear2_brand,
+            comparison_type=comparison_type,
+            notes=notes,
+            winner=winner,
+            source_url=source_url,
+        )
+
+        if success:
+            return (
+                f"Saved {comparison_type} comparison: "
+                f"'{gear1_name}' vs '{gear2_name}'"
+                + (f" (winner: {winner})" if winner else "")
+            )
+        return "Failed to save comparison - ensure both items exist in database"
+
+    except Exception as e:
+        logger.error(f"Error saving comparison: {e}")
+        return f"Error: {str(e)}"
+
+
+def save_product_alternative(
+    gear_name: str,
+    brand: str,
+    alternative_name: str,
+    alternative_brand: str,
+    reason: Optional[str] = None,
+    source_url: Optional[str] = None,
+) -> str:
+    """Mark one product as an alternative to another.
+
+    Use when a source suggests one product as an alternative/substitute.
+    Examples: "If you can't get X, try Y" or "A cheaper option is..."
+
+    Args:
+        gear_name: The primary product name
+        brand: Primary product brand
+        alternative_name: The alternative product name
+        alternative_brand: Alternative product brand
+        reason: Why it's an alternative (cheaper, lighter, more available, etc.)
+        source_url: Where this was mentioned
+
+    Returns:
+        Success or error message
+    """
+    try:
+        success = save_gear_alternative(
+            gear_name=gear_name,
+            brand=brand,
+            alternative_name=alternative_name,
+            alternative_brand=alternative_brand,
+            reason=reason,
+            source_url=source_url,
+        )
+
+        if success:
+            msg = f"'{alternative_name}' marked as alternative to '{gear_name}'"
+            if reason:
+                msg += f" (reason: {reason})"
+            return msg
+        return "Failed to save alternative - ensure both items exist"
+
+    except Exception as e:
+        logger.error(f"Error saving alternative: {e}")
+        return f"Error: {str(e)}"
+
+
+def get_product_comparisons(gear_name: str, brand: str) -> str:
+    """Get all comparisons involving a gear item.
+
+    Args:
+        gear_name: Name of the gear item
+        brand: Brand of the gear item
+
+    Returns:
+        Formatted list of comparisons
+    """
+    try:
+        comparisons = get_gear_comparisons(gear_name, brand)
+
+        if not comparisons:
+            return f"No comparisons found for '{gear_name}' by {brand}"
+
+        output = [f"## Comparisons for {gear_name} by {brand}\n"]
+
+        for comp in comparisons:
+            other = f"{comp.get('otherItem')} by {comp.get('otherBrand')}"
+            comp_type = comp.get("comparisonType", "general")
+            winner = comp.get("winner")
+            notes = comp.get("notes")
+
+            line = f"- **{comp_type}** vs {other}"
+            if winner:
+                line += f" (winner: {winner})"
+            output.append(line)
+            if notes:
+                output.append(f"  > {notes}")
+
+        return "\n".join(output)
+
+    except Exception as e:
+        logger.error(f"Error getting comparisons: {e}")
+        return f"Error: {str(e)}"
+
+
+# ============================================================================
+# Opinion and Review Tools
+# ============================================================================
+
+
+def save_product_opinion(
+    gear_name: str,
+    brand: str,
+    opinion_type: str,
+    content: str,
+    sentiment: str = "neutral",
+    author: Optional[str] = None,
+    source_url: Optional[str] = None,
+) -> str:
+    """Save an opinion, review, or observation about a gear item.
+
+    Captures subjective information like pros, cons, tips, warnings,
+    and real-world experiences mentioned in sources.
+
+    Args:
+        gear_name: Name of the gear item
+        brand: Brand of the gear item
+        opinion_type: Type of opinion:
+            - "pro": Positive aspect/advantage
+            - "con": Negative aspect/disadvantage
+            - "tip": Usage tip or recommendation
+            - "warning": Potential issue or caution
+            - "experience": Real-world usage report
+        content: The actual opinion/observation text
+        sentiment: positive, negative, or neutral
+        author: Who said this (channel name, reviewer, etc.)
+        source_url: Where this was found
+
+    Returns:
+        Success or error message
+    """
+    valid_types = ["pro", "con", "tip", "warning", "experience"]
+    if opinion_type not in valid_types:
+        return f"Invalid opinion_type. Use one of: {valid_types}"
+
+    try:
+        success = save_gear_opinion(
+            gear_name=gear_name,
+            brand=brand,
+            opinion_type=opinion_type,
+            content=content,
+            sentiment=sentiment,
+            author=author,
+            source_url=source_url,
+        )
+
+        if success:
+            return f"Saved {opinion_type} ({sentiment}) for '{gear_name}'"
+        return "Failed to save opinion - ensure gear item exists"
+
+    except Exception as e:
+        logger.error(f"Error saving opinion: {e}")
+        return f"Error: {str(e)}"
+
+
+def get_product_opinions(
+    gear_name: str,
+    brand: str,
+    opinion_type: Optional[str] = None,
+) -> str:
+    """Get opinions and reviews for a gear item.
+
+    Args:
+        gear_name: Name of the gear item
+        brand: Brand of the gear item
+        opinion_type: Optional filter (pro, con, tip, warning, experience)
+
+    Returns:
+        Formatted list of opinions
+    """
+    try:
+        opinions = get_gear_opinions(gear_name, brand, opinion_type)
+
+        if not opinions:
+            filter_msg = f" of type '{opinion_type}'" if opinion_type else ""
+            return f"No opinions{filter_msg} found for '{gear_name}' by {brand}"
+
+        output = [f"## Opinions for {gear_name} by {brand}\n"]
+
+        # Group by type
+        by_type = {}
+        for op in opinions:
+            t = op.get("type", "other")
+            if t not in by_type:
+                by_type[t] = []
+            by_type[t].append(op)
+
+        type_emoji = {
+            "pro": "+",
+            "con": "-",
+            "tip": "*",
+            "warning": "!",
+            "experience": ">",
+        }
+
+        for op_type, ops in by_type.items():
+            emoji = type_emoji.get(op_type, "")
+            output.append(f"### {op_type.upper()}")
+            for op in ops:
+                author = f" - {op['author']}" if op.get("author") else ""
+                output.append(f"{emoji} {op['content']}{author}")
+
+        return "\n".join(output)
+
+    except Exception as e:
+        logger.error(f"Error getting opinions: {e}")
+        return f"Error: {str(e)}"
+
+
+# ============================================================================
+# Usage Context Tools
+# ============================================================================
+
+
+def save_recommended_usage(
+    gear_name: str,
+    brand: str,
+    context_type: str,
+    description: str,
+    source_url: Optional[str] = None,
+) -> str:
+    """Save a recommended usage context for a gear item.
+
+    Records when sources mention what conditions/activities a product
+    is good for.
+
+    Args:
+        gear_name: Name of the gear item
+        brand: Brand of the gear item
+        context_type: Type of context:
+            - "terrain": Ground conditions (rocky, sandy, snow)
+            - "weather": Weather conditions (rain, cold, hot)
+            - "activity": Activity type (backpacking, mountaineering, car camping)
+            - "skill_level": User skill level (beginner, intermediate, expert)
+            - "trip_type": Trip style (ultralight, base weight focused, luxury)
+        description: Description of the recommended context
+        source_url: Where this was mentioned
+
+    Returns:
+        Success or error message
+    """
+    valid_types = ["terrain", "weather", "activity", "skill_level", "trip_type"]
+    if context_type not in valid_types:
+        return f"Invalid context_type. Use one of: {valid_types}"
+
+    try:
+        success = save_usage_context(
+            gear_name=gear_name,
+            brand=brand,
+            context_type=context_type,
+            description=description,
+            source_url=source_url,
+        )
+
+        if success:
+            return f"Saved {context_type} context for '{gear_name}': {description}"
+        return "Failed to save usage context - ensure gear item exists"
+
+    except Exception as e:
+        logger.error(f"Error saving usage context: {e}")
+        return f"Error: {str(e)}"
+
+
+def get_recommended_usage(gear_name: str, brand: str) -> str:
+    """Get all recommended usage contexts for a gear item.
+
+    Args:
+        gear_name: Name of the gear item
+        brand: Brand of the gear item
+
+    Returns:
+        Formatted list of usage contexts
+    """
+    try:
+        contexts = get_gear_usage_contexts(gear_name, brand)
+
+        if not contexts:
+            return f"No usage contexts found for '{gear_name}' by {brand}"
+
+        output = [f"## Recommended Usage for {gear_name} by {brand}\n"]
+
+        # Group by type
+        by_type = {}
+        for ctx in contexts:
+            t = ctx.get("context_type", "other")
+            if t not in by_type:
+                by_type[t] = []
+            by_type[t].append(ctx)
+
+        for ctx_type, ctxs in by_type.items():
+            output.append(f"### {ctx_type.replace('_', ' ').title()}")
+            for ctx in ctxs:
+                output.append(f"- {ctx['description']}")
+
+        return "\n".join(output)
+
+    except Exception as e:
+        logger.error(f"Error getting usage contexts: {e}")
         return f"Error: {str(e)}"

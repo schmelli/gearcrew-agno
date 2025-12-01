@@ -2,8 +2,8 @@
   "lockfileVersion": 1,
   "prompts": {
     "gear-extractor": {
-      "version": 4,
-      "versionId": "fkM6LKZ6R2V0EUiuA60cS",
+      "version": 5,
+      "versionId": "YcgzHs9KPtfsGXE_HOz51",
       "materialized": "prompts/gear-extractor.prompt.yaml"
     }
   }

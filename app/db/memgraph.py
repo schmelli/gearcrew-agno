@@ -1227,3 +1227,474 @@ def mark_item_enriched(name: str, brand: str) -> bool:
     """
     results = execute_and_fetch(query, {"name": name, "brand": brand})
     return len(results) > 0
+
+
+# ============================================================================
+# Field Provenance Tracking
+# ============================================================================
+
+
+def add_field_provenance(
+    gear_name: str,
+    brand: str,
+    field_name: str,
+    source_url: str,
+    confidence: float = 1.0,
+    extracted_at: Optional[str] = None,
+) -> bool:
+    """Track which source provided a specific field value.
+
+    Creates a FieldSource node linked to the gear item to track provenance.
+
+    Args:
+        gear_name: Name of the gear item
+        brand: Brand of the gear item
+        field_name: Name of the field (e.g., "weight_grams", "price_usd")
+        source_url: URL where this data was found
+        confidence: Confidence score 0.0-1.0
+        extracted_at: ISO timestamp (defaults to now)
+
+    Returns:
+        True if successful
+    """
+    query = """
+    MATCH (g:GearItem {name: $name, brand: $brand})
+    MERGE (fs:FieldSource {
+        gearName: $name,
+        gearBrand: $brand,
+        fieldName: $field_name
+    })
+    ON CREATE SET
+        fs.sourceUrl = $source_url,
+        fs.confidence = $confidence,
+        fs.extractedAt = datetime()
+    ON MATCH SET
+        fs.sourceUrl = CASE
+            WHEN $confidence > fs.confidence THEN $source_url
+            ELSE fs.sourceUrl
+        END,
+        fs.confidence = CASE
+            WHEN $confidence > fs.confidence THEN $confidence
+            ELSE fs.confidence
+        END,
+        fs.updatedAt = datetime()
+    MERGE (g)-[:HAS_FIELD_SOURCE]->(fs)
+    RETURN fs.fieldName
+    """
+    results = execute_and_fetch(query, {
+        "name": gear_name,
+        "brand": brand,
+        "field_name": field_name,
+        "source_url": source_url,
+        "confidence": confidence,
+    })
+    return len(results) > 0
+
+
+def get_field_provenance(gear_name: str, brand: str) -> list[dict]:
+    """Get all field provenance data for a gear item.
+
+    Args:
+        gear_name: Name of the gear item
+        brand: Brand of the gear item
+
+    Returns:
+        List of field source records with field name, source URL, confidence
+    """
+    query = """
+    MATCH (g:GearItem {name: $name, brand: $brand})-[:HAS_FIELD_SOURCE]->(fs:FieldSource)
+    RETURN fs.fieldName as field,
+           fs.sourceUrl as source_url,
+           fs.confidence as confidence,
+           fs.extractedAt as extracted_at
+    ORDER BY fs.fieldName
+    """
+    return execute_and_fetch(query, {"name": gear_name, "brand": brand})
+
+
+def get_source_contributions(source_url: str) -> list[dict]:
+    """Get all data contributions from a specific source.
+
+    Args:
+        source_url: The source URL to check
+
+    Returns:
+        List of gear items and fields contributed by this source
+    """
+    query = """
+    MATCH (fs:FieldSource {sourceUrl: $url})
+    RETURN fs.gearName as gear_name,
+           fs.gearBrand as brand,
+           collect(fs.fieldName) as fields_contributed
+    """
+    return execute_and_fetch(query, {"url": source_url})
+
+
+# ============================================================================
+# Dynamic Attributes (Flexible Property Storage)
+# ============================================================================
+
+
+def set_gear_attribute(
+    gear_name: str,
+    brand: str,
+    attr_name: str,
+    attr_value: Any,
+    source_url: Optional[str] = None,
+) -> bool:
+    """Set a dynamic attribute on a gear item.
+
+    Use this for non-standard properties that aren't part of the schema.
+    Attributes are stored in a flexible map.
+
+    Args:
+        gear_name: Name of the gear item
+        brand: Brand of the gear item
+        attr_name: Attribute name (e.g., "color_options", "warranty_years")
+        attr_value: Attribute value (string, number, or list)
+        source_url: Optional source URL for provenance
+
+    Returns:
+        True if successful
+    """
+    # Serialize value if it's a list
+    if isinstance(attr_value, list):
+        import json
+        attr_value = json.dumps(attr_value)
+
+    query = """
+    MATCH (g:GearItem {name: $name, brand: $brand})
+    SET g[$attr_name] = $attr_value
+    RETURN g.name
+    """
+    success = execute_cypher(query, {
+        "name": gear_name,
+        "brand": brand,
+        "attr_name": attr_name,
+        "attr_value": attr_value,
+    })
+
+    # Track provenance if source provided
+    if success and source_url:
+        add_field_provenance(gear_name, brand, attr_name, source_url)
+
+    return success
+
+
+def get_gear_attributes(gear_name: str, brand: str) -> dict:
+    """Get all attributes of a gear item including dynamic ones.
+
+    Args:
+        gear_name: Name of the gear item
+        brand: Brand of the gear item
+
+    Returns:
+        Dictionary of all properties on the gear item
+    """
+    query = """
+    MATCH (g:GearItem {name: $name, brand: $brand})
+    RETURN properties(g) as props
+    """
+    results = execute_and_fetch(query, {"name": gear_name, "brand": brand})
+    return results[0]["props"] if results else {}
+
+
+# ============================================================================
+# Comparisons and Alternatives
+# ============================================================================
+
+
+def save_gear_comparison(
+    gear1_name: str,
+    gear1_brand: str,
+    gear2_name: str,
+    gear2_brand: str,
+    comparison_type: str,
+    notes: Optional[str] = None,
+    winner: Optional[str] = None,
+    source_url: Optional[str] = None,
+) -> bool:
+    """Save a comparison between two gear items.
+
+    Args:
+        gear1_name: First item name
+        gear1_brand: First item brand
+        gear2_name: Second item name
+        gear2_brand: Second item brand
+        comparison_type: Type of comparison (weight, price, durability, etc.)
+        notes: Comparison notes/details
+        winner: Which item "wins" this comparison (optional)
+        source_url: Where this comparison was found
+
+    Returns:
+        True if successful
+    """
+    query = """
+    MATCH (g1:GearItem {name: $name1, brand: $brand1})
+    MATCH (g2:GearItem {name: $name2, brand: $brand2})
+    MERGE (g1)-[c:COMPARED_TO {comparisonType: $comp_type}]->(g2)
+    SET c.notes = $notes,
+        c.winner = $winner,
+        c.sourceUrl = $source_url,
+        c.updatedAt = datetime()
+    RETURN g1.name, g2.name
+    """
+    results = execute_and_fetch(query, {
+        "name1": gear1_name,
+        "brand1": gear1_brand,
+        "name2": gear2_name,
+        "brand2": gear2_brand,
+        "comp_type": comparison_type,
+        "notes": notes,
+        "winner": winner,
+        "source_url": source_url,
+    })
+    return len(results) > 0
+
+
+def save_gear_alternative(
+    gear_name: str,
+    brand: str,
+    alternative_name: str,
+    alternative_brand: str,
+    reason: Optional[str] = None,
+    source_url: Optional[str] = None,
+) -> bool:
+    """Mark one gear item as an alternative to another.
+
+    Args:
+        gear_name: The primary item name
+        brand: Primary item brand
+        alternative_name: The alternative item name
+        alternative_brand: Alternative item brand
+        reason: Why this is an alternative (cheaper, lighter, etc.)
+        source_url: Where this was mentioned
+
+    Returns:
+        True if successful
+    """
+    query = """
+    MATCH (g1:GearItem {name: $name1, brand: $brand1})
+    MATCH (g2:GearItem {name: $name2, brand: $brand2})
+    MERGE (g1)-[a:HAS_ALTERNATIVE]->(g2)
+    SET a.reason = $reason,
+        a.sourceUrl = $source_url,
+        a.updatedAt = datetime()
+    RETURN g1.name, g2.name
+    """
+    results = execute_and_fetch(query, {
+        "name1": gear_name,
+        "brand1": brand,
+        "name2": alternative_name,
+        "brand2": alternative_brand,
+        "reason": reason,
+        "source_url": source_url,
+    })
+    return len(results) > 0
+
+
+def get_gear_comparisons(gear_name: str, brand: str) -> list[dict]:
+    """Get all comparisons involving a gear item.
+
+    Args:
+        gear_name: Name of the gear item
+        brand: Brand of the gear item
+
+    Returns:
+        List of comparison records
+    """
+    query = """
+    MATCH (g:GearItem {name: $name, brand: $brand})
+    OPTIONAL MATCH (g)-[c:COMPARED_TO]->(other:GearItem)
+    OPTIONAL MATCH (g)<-[c2:COMPARED_TO]-(other2:GearItem)
+    WITH g,
+         collect(DISTINCT {
+            otherItem: other.name,
+            otherBrand: other.brand,
+            comparisonType: c.comparisonType,
+            notes: c.notes,
+            winner: c.winner,
+            direction: 'outgoing'
+         }) as outgoing,
+         collect(DISTINCT {
+            otherItem: other2.name,
+            otherBrand: other2.brand,
+            comparisonType: c2.comparisonType,
+            notes: c2.notes,
+            winner: c2.winner,
+            direction: 'incoming'
+         }) as incoming
+    RETURN outgoing + incoming as comparisons
+    """
+    results = execute_and_fetch(query, {"name": gear_name, "brand": brand})
+    if results and results[0].get("comparisons"):
+        # Filter out null entries
+        return [c for c in results[0]["comparisons"] if c.get("otherItem")]
+    return []
+
+
+def get_gear_alternatives(gear_name: str, brand: str) -> list[dict]:
+    """Get all alternatives for a gear item.
+
+    Args:
+        gear_name: Name of the gear item
+        brand: Brand of the gear item
+
+    Returns:
+        List of alternative items
+    """
+    query = """
+    MATCH (g:GearItem {name: $name, brand: $brand})-[a:HAS_ALTERNATIVE]->(alt:GearItem)
+    RETURN alt.name as name, alt.brand as brand, alt.category as category,
+           a.reason as reason, a.sourceUrl as source_url
+    """
+    return execute_and_fetch(query, {"name": gear_name, "brand": brand})
+
+
+# ============================================================================
+# Opinion/Review Tracking
+# ============================================================================
+
+
+def save_gear_opinion(
+    gear_name: str,
+    brand: str,
+    opinion_type: str,
+    content: str,
+    sentiment: str = "neutral",
+    author: Optional[str] = None,
+    source_url: Optional[str] = None,
+) -> bool:
+    """Save an opinion or review about a gear item.
+
+    Args:
+        gear_name: Name of the gear item
+        brand: Brand of the gear item
+        opinion_type: Type (pro, con, tip, warning, experience)
+        content: The opinion/review content
+        sentiment: positive, negative, or neutral
+        author: Who expressed this opinion (reviewer name, channel, etc.)
+        source_url: Where this was found
+
+    Returns:
+        True if successful
+    """
+    query = """
+    MATCH (g:GearItem {name: $name, brand: $brand})
+    CREATE (o:Opinion {
+        opinionType: $opinion_type,
+        content: $content,
+        sentiment: $sentiment,
+        author: $author,
+        sourceUrl: $source_url,
+        createdAt: datetime()
+    })
+    CREATE (g)-[:HAS_OPINION]->(o)
+    RETURN o.content
+    """
+    results = execute_and_fetch(query, {
+        "name": gear_name,
+        "brand": brand,
+        "opinion_type": opinion_type,
+        "content": content,
+        "sentiment": sentiment,
+        "author": author,
+        "source_url": source_url,
+    })
+    return len(results) > 0
+
+
+def get_gear_opinions(
+    gear_name: str,
+    brand: str,
+    opinion_type: Optional[str] = None,
+) -> list[dict]:
+    """Get opinions/reviews for a gear item.
+
+    Args:
+        gear_name: Name of the gear item
+        brand: Brand of the gear item
+        opinion_type: Optional filter (pro, con, tip, warning, experience)
+
+    Returns:
+        List of opinion records
+    """
+    type_filter = ""
+    params = {"name": gear_name, "brand": brand}
+
+    if opinion_type:
+        type_filter = "AND o.opinionType = $opinion_type"
+        params["opinion_type"] = opinion_type
+
+    query = f"""
+    MATCH (g:GearItem {{name: $name, brand: $brand}})-[:HAS_OPINION]->(o:Opinion)
+    WHERE true {type_filter}
+    RETURN o.opinionType as type,
+           o.content as content,
+           o.sentiment as sentiment,
+           o.author as author,
+           o.sourceUrl as source_url
+    ORDER BY o.createdAt DESC
+    """
+    return execute_and_fetch(query, params)
+
+
+# ============================================================================
+# Usage Context
+# ============================================================================
+
+
+def save_usage_context(
+    gear_name: str,
+    brand: str,
+    context_type: str,
+    description: str,
+    source_url: Optional[str] = None,
+) -> bool:
+    """Save a usage context for a gear item.
+
+    Args:
+        gear_name: Name of the gear item
+        brand: Brand of the gear item
+        context_type: Type (terrain, weather, activity, skill_level, trip_type)
+        description: Description of the context
+        source_url: Where this was mentioned
+
+    Returns:
+        True if successful
+    """
+    query = """
+    MATCH (g:GearItem {name: $name, brand: $brand})
+    MERGE (c:UsageContext {contextType: $context_type, description: $description})
+    MERGE (g)-[r:SUITABLE_FOR]->(c)
+    SET r.sourceUrl = $source_url,
+        r.updatedAt = datetime()
+    RETURN c.description
+    """
+    results = execute_and_fetch(query, {
+        "name": gear_name,
+        "brand": brand,
+        "context_type": context_type,
+        "description": description,
+        "source_url": source_url,
+    })
+    return len(results) > 0
+
+
+def get_gear_usage_contexts(gear_name: str, brand: str) -> list[dict]:
+    """Get all usage contexts for a gear item.
+
+    Args:
+        gear_name: Name of the gear item
+        brand: Brand of the gear item
+
+    Returns:
+        List of usage context records
+    """
+    query = """
+    MATCH (g:GearItem {name: $name, brand: $brand})-[r:SUITABLE_FOR]->(c:UsageContext)
+    RETURN c.contextType as context_type,
+           c.description as description,
+           r.sourceUrl as source_url
+    """
+    return execute_and_fetch(query, {"name": gear_name, "brand": brand})
