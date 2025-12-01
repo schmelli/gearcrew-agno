@@ -186,12 +186,19 @@ with st.sidebar:
     render_task_status_sidebar()
 
     st.markdown("### Navigation")
+    nav_options = [
+        "Graph Explorer",
+        "Agent Chat",
+        "Playlist Manager",
+        "Website Extractor",
+        "Video Archive",
+    ]
     view_mode = st.radio(
         "View:",
-        ["Graph Explorer", "Agent Chat", "Website Extractor", "Video Archive"],
-        index=["Graph Explorer", "Agent Chat", "Website Extractor", "Video Archive"].index(
-            st.session_state.view_mode
-        ),
+        nav_options,
+        index=nav_options.index(st.session_state.view_mode)
+        if st.session_state.view_mode in nav_options
+        else 0,
         key="nav_radio",
     )
 
@@ -298,6 +305,11 @@ elif st.session_state.view_mode == "Agent Chat":
             st.session_state.messages = []
             st.session_state.processed_task_ids = set()
             st.rerun()
+
+elif st.session_state.view_mode == "Playlist Manager":
+    from app.ui.playlist_manager import render_playlist_manager
+
+    render_playlist_manager()
 
 elif st.session_state.view_mode == "Website Extractor":
     from app.ui.website_extractor import render_website_extractor

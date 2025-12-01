@@ -455,6 +455,55 @@ Return the structured extraction result."""
     )
 
 
+def extract_gear_with_context(
+    source_url: str,
+    user_context: str = "",
+    video_title: str = "",
+) -> str:
+    """Extract gear from a video with additional user-provided context.
+
+    Args:
+        source_url: URL to extract gear information from
+        user_context: Additional context/notes from user to include in prompt
+        video_title: Title of the video (for better prompting)
+
+    Returns:
+        Agent's extraction response as string
+    """
+    agent = get_agent("sonnet")
+
+    context_section = ""
+    if user_context:
+        context_section = f"""
+## Important Context from User:
+{user_context}
+
+Please keep this context in mind during extraction.
+"""
+
+    title_section = ""
+    if video_title:
+        title_section = f"Video Title: {video_title}\n"
+
+    prompt = f"""Please analyze the following source and extract all hiking/backpacking gear information:
+
+{title_section}Source URL: {source_url}
+{context_section}
+Instructions:
+1. First, fetch the content from this URL using the appropriate tool (YouTube transcript or webpage scraper)
+2. Extract all gear items mentioned with their specifications
+3. Identify any manufacturers and their details
+4. Extract valuable knowledge facts, tips, and reviews
+5. IMPORTANT: Check for duplicates using find_similar_gear before saving any new gear
+6. Save all extracted gear items and insights to the database
+7. Record this video as processed using save_extraction_result
+
+Please proceed with the extraction."""
+
+    response = agent.run(prompt)
+    return str(response.content) if response.content else ""
+
+
 def run_agent_chat(message: str, model_tier: ModelTier | None = None) -> str:
     """Run the agent in chat mode for interactive conversations.
 
