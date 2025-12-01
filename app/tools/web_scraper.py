@@ -180,7 +180,14 @@ def map_website(url: str, max_pages: int = 100) -> dict:
         # Extract URLs from result
         all_urls = []
         if hasattr(result, 'links') and result.links:
-            all_urls = list(result.links)
+            # Handle LinkResult objects - extract URL string from each
+            for link in result.links:
+                if hasattr(link, 'url'):
+                    all_urls.append(link.url)
+                elif isinstance(link, str):
+                    all_urls.append(link)
+                else:
+                    all_urls.append(str(link))
         elif isinstance(result, dict) and 'links' in result:
             all_urls = result['links']
         elif isinstance(result, list):
@@ -278,11 +285,14 @@ def extract_product_data(url: str, schema: dict = None) -> dict:
     try:
         client = _get_firecrawl_client()
 
-        # Use Firecrawl extract with schema
-        result = client.extract([url], {
-            "schema": schema,
-            "prompt": "Extract product information for outdoor/hiking/backpacking gear."
-        })
+        # Firecrawl v2 extract API
+        result = client.extract(
+            urls=[url],
+            params={
+                "schema": schema,
+                "prompt": "Extract product information for outdoor/hiking/backpacking gear."
+            }
+        )
 
         # Handle response
         if hasattr(result, 'data') and result.data:
