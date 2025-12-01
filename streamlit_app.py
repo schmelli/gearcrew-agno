@@ -171,6 +171,10 @@ st.set_page_config(
     page_icon="[G]",
 )
 
+# Initialize view mode in session state
+if "view_mode" not in st.session_state:
+    st.session_state.view_mode = "Graph Explorer"
+
 # Sidebar
 with st.sidebar:
     st.title("GearCrew")
@@ -184,9 +188,16 @@ with st.sidebar:
     st.markdown("### Navigation")
     view_mode = st.radio(
         "View:",
-        ["Graph Explorer", "Agent Chat", "Video Archive"],
-        index=0,
+        ["Graph Explorer", "Agent Chat", "Website Extractor", "Video Archive"],
+        index=["Graph Explorer", "Agent Chat", "Website Extractor", "Video Archive"].index(
+            st.session_state.view_mode
+        ),
+        key="nav_radio",
     )
+
+    # Update session state when view changes
+    if view_mode != st.session_state.view_mode:
+        st.session_state.view_mode = view_mode
 
     st.markdown("---")
 
@@ -201,13 +212,13 @@ if get_task_queue().get_active_tasks():
     time.sleep(0.5)  # Small delay to prevent hammering
     st.rerun()
 
-# Main content
-if view_mode == "Graph Explorer":
+# Main content - use session state for view to survive reruns
+if st.session_state.view_mode == "Graph Explorer":
     from app.ui.graph_explorer import render_graph_explorer
 
     render_graph_explorer()
 
-elif view_mode == "Agent Chat":
+elif st.session_state.view_mode == "Agent Chat":
     from app.task_queue import get_task_queue, TaskStatus
 
     st.header("GearCrew Agent Chat")
@@ -288,7 +299,12 @@ elif view_mode == "Agent Chat":
             st.session_state.processed_task_ids = set()
             st.rerun()
 
-elif view_mode == "Video Archive":
+elif st.session_state.view_mode == "Website Extractor":
+    from app.ui.website_extractor import render_website_extractor
+
+    render_website_extractor()
+
+elif st.session_state.view_mode == "Video Archive":
     from app.ui.archive_view import render_archive_view
 
     render_archive_view()

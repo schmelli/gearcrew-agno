@@ -27,6 +27,7 @@ from app.db.memgraph import (
     get_gear_from_source,
     find_potential_duplicates,
     merge_gear_items,
+    scan_for_duplicates,
 )
 
 logger = logging.getLogger(__name__)
@@ -578,6 +579,66 @@ def update_existing_gear(
         return f"Error: {str(e)}"
 
 
+def audit_duplicates() -> str:
+    """Scan the entire database for potential duplicate gear items.
+
+    This tool performs a comprehensive audit of all GearItem nodes,
+    identifying groups of items that may be duplicates based on:
+    - Similar names (token matching)
+    - Same brand with similar product names
+    - Name variations (e.g., "BRS-3000T" vs "BRS 3000T Ultralight")
+
+    Returns:
+        A detailed report of duplicate groups with recommendations
+    """
+    try:
+        groups = scan_for_duplicates(min_similarity=2)
+
+        if not groups:
+            return "No potential duplicates found in the database."
+
+        output = [f"## Duplicate Audit Report\n"]
+        output.append(f"Found **{len(groups)} duplicate groups** requiring attention:\n")
+
+        total_duplicates = sum(g["count"] - 1 for g in groups)
+        output.append(f"Total duplicate entries: {total_duplicates}\n")
+        output.append("---\n")
+
+        for i, group in enumerate(groups, 1):
+            canonical = group["canonical"]
+            duplicates = group["duplicates"]
+            recommendation = group["recommendation"]
+
+            output.append(f"### Group {i}: {canonical.get('name', 'Unknown')}")
+            output.append(f"**Recommendation:** {recommendation.upper()}")
+            output.append(f"**Items in group:** {group['count']}\n")
+
+            output.append("**Keep (canonical):**")
+            output.append(f"  - Name: `{canonical.get('name')}`")
+            output.append(f"  - Brand: `{canonical.get('brand') or 'None'}`")
+            output.append(f"  - Category: {canonical.get('category') or 'N/A'}")
+            output.append(f"  - Weight: {canonical.get('weight') or 'N/A'}g")
+            output.append(f"  - Price: ${canonical.get('price') or 'N/A'}\n")
+
+            output.append("**Duplicates to merge:**")
+            for dup in duplicates:
+                output.append(f"  - `{dup.get('name')}` by `{dup.get('brand') or 'None'}`")
+
+            output.append("\n**To merge, use:**")
+            for dup in duplicates:
+                dup_brand = dup.get('brand') or ''
+                can_brand = canonical.get('brand') or ''
+                output.append(
+                    f"  `merge_duplicate_gear('{dup.get('name')}', '{dup_brand}', "
+                    f"'{canonical.get('name')}', '{can_brand}')`"
+                )
+            output.append("\n---\n")
+
+        return "\n".join(output)
+
+    except Exception as e:
+        logger.error(f"Error during duplicate audit: {e}")
+        return f"Error scanning for duplicates: {str(e)}"
 
 
 def execute_read_query(cypher: str) -> str:

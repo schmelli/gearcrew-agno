@@ -58,11 +58,16 @@ def search_nodes(search_term: str, label: str = None, limit: int = 20) -> list:
 
 
 def get_recent_items(label: str = "GearItem", limit: int = 10) -> list:
-    """Get recently added items of a specific label."""
+    """Get recently added items of a specific label.
+
+    Orders by node ID descending (higher IDs are newer in Memgraph).
+    This is more reliable than createdAt since older items may not have it.
+    """
     query = f"""
     MATCH (n:{label})
-    RETURN n, labels(n) as labels, id(n) as node_id
-    ORDER BY n.createdAt DESC, n.name
+    RETURN n, labels(n) as labels, id(n) as node_id,
+           n.createdAt as created_at
+    ORDER BY id(n) DESC
     LIMIT {limit}
     """
     return execute_and_fetch(query)
@@ -72,10 +77,8 @@ def get_brands() -> list:
     """Get all outdoor brands with product counts."""
     query = """
     MATCH (b:OutdoorBrand)
-    WITH b,
-         size([(b)-[:MANUFACTURES]->(p) | p]) +
-         size([(b)-[:MANUFACTURES_ITEM]->(p) | p]) +
-         size([(p)-[:PRODUCED_BY]->(b) | p]) as product_count
+    OPTIONAL MATCH (b)-[:MANUFACTURES_ITEM]->(g:GearItem)
+    WITH b, count(g) as product_count
     RETURN b.name as name, id(b) as node_id, product_count
     ORDER BY product_count DESC, b.name
     """

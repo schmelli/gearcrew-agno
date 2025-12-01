@@ -618,6 +618,124 @@ def find_potential_duplicates(name: str, brand: Optional[str] = None) -> list[di
     return results
 
 
+def scan_for_duplicates(min_similarity: int = 2) -> list[dict]:
+    """Scan the entire database for potential duplicate gear items.
+
+    Groups items by similar names and identifies potential duplicates.
+
+    Args:
+        min_similarity: Minimum number of matching words to consider duplicate
+
+    Returns:
+        List of duplicate groups with items and recommendations
+    """
+    # Get all gear items
+    query = """
+    MATCH (g:GearItem)
+    OPTIONAL MATCH (g)-[:IS_VARIANT_OF]->(pf:ProductFamily)
+    RETURN g.name as name, g.brand as brand, g.category as category,
+           g.weight_grams as weight, g.price_usd as price,
+           pf.name as product_family,
+           id(g) as node_id
+    ORDER BY g.name
+    """
+    all_items = execute_and_fetch(query)
+
+    if not all_items:
+        return []
+
+    # Group by normalized name tokens
+    from collections import defaultdict
+    import re
+
+    def normalize_name(name: str) -> set:
+        """Extract key tokens from a product name."""
+        if not name:
+            return set()
+        # Remove common words and punctuation
+        name_lower = name.lower()
+        # Remove punctuation and split
+        tokens = re.findall(r'[a-z0-9]+', name_lower)
+        # Filter out very common words
+        stop_words = {'the', 'a', 'an', 'and', 'or', 'for', 'with', 'ultra',
+                      'light', 'lightweight', 'ultralight', 'pro', 'plus', 'new'}
+        return {t for t in tokens if t not in stop_words and len(t) > 1}
+
+    def tokens_match(tokens1: set, tokens2: set, min_match: int) -> bool:
+        """Check if two token sets have enough overlap."""
+        if not tokens1 or not tokens2:
+            return False
+        common = tokens1 & tokens2
+        return len(common) >= min_match
+
+    # Find duplicate groups
+    duplicate_groups = []
+    processed = set()
+
+    for i, item1 in enumerate(all_items):
+        if i in processed:
+            continue
+
+        tokens1 = normalize_name(item1.get("name", ""))
+        brand1 = (item1.get("brand") or "").lower()
+
+        group = [item1]
+        group_indices = {i}
+
+        for j, item2 in enumerate(all_items):
+            if j <= i or j in processed:
+                continue
+
+            tokens2 = normalize_name(item2.get("name", ""))
+            brand2 = (item2.get("brand") or "").lower()
+
+            # Check for match: same brand OR significant token overlap
+            same_brand = brand1 and brand2 and brand1 == brand2
+            token_overlap = tokens_match(tokens1, tokens2, min_similarity)
+
+            # For same brand, require less token overlap
+            if same_brand and tokens_match(tokens1, tokens2, 1):
+                group.append(item2)
+                group_indices.add(j)
+            elif token_overlap:
+                group.append(item2)
+                group_indices.add(j)
+
+        if len(group) > 1:
+            # Determine the best canonical item (most complete data)
+            def completeness_score(item):
+                score = 0
+                if item.get("brand"):
+                    score += 2
+                if item.get("weight"):
+                    score += 1
+                if item.get("price"):
+                    score += 1
+                if item.get("category"):
+                    score += 1
+                if item.get("product_family"):
+                    score += 1
+                return score
+
+            group_sorted = sorted(group, key=completeness_score, reverse=True)
+            canonical = group_sorted[0]
+            duplicates = group_sorted[1:]
+
+            duplicate_groups.append({
+                "canonical": canonical,
+                "duplicates": duplicates,
+                "count": len(group),
+                "recommendation": "merge" if len(group) <= 3 else "review",
+            })
+
+            processed.update(group_indices)
+
+    # Sort by count (most duplicates first)
+    duplicate_groups.sort(key=lambda x: x["count"], reverse=True)
+
+    return duplicate_groups
+
+
 def merge_gear_items(source_name: str, source_brand: str, target_name: str, target_brand: str) -> bool:
     """Merge a duplicate gear item into an existing one.
 

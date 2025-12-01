@@ -17,7 +17,13 @@ from dotenv import load_dotenv
 
 from app.models.gear import ExtractionResult, GearItem, KnowledgeFact, Manufacturer
 from app.tools.youtube import get_youtube_transcript
-from app.tools.web_scraper import scrape_webpage, search_web
+from app.tools.web_scraper import (
+    scrape_webpage,
+    search_web,
+    map_website,
+    extract_product_data,
+    batch_extract_products,
+)
 from app.tools.geargraph import (
     find_similar_gear,
     check_gear_exists,
@@ -31,6 +37,7 @@ from app.tools.geargraph import (
     link_extracted_gear_to_source,
     merge_duplicate_gear,
     update_existing_gear,
+    audit_duplicates,
 )
 
 load_dotenv()
@@ -167,6 +174,93 @@ def search_gear_info(query: str) -> str:
         return f"Error searching: {str(e)}"
 
 
+def discover_product_pages(website_url: str) -> str:
+    """Map a manufacturer's website to discover all product pages.
+
+    Use this when given a manufacturer's main website URL to find
+    all their product pages for extraction.
+
+    Args:
+        website_url: Base URL of the manufacturer's website (e.g., https://durstongear.com)
+
+    Returns:
+        List of discovered product page URLs
+    """
+    try:
+        result = map_website(website_url, max_pages=100)
+
+        output = [f"## Website Map Results for {website_url}\n"]
+        output.append(f"Total pages found: {result['total_count']}")
+        output.append(f"Product pages identified: {result['product_count']}\n")
+
+        if result['product_urls']:
+            output.append("### Product Pages:")
+            for i, url in enumerate(result['product_urls'][:20], 1):
+                output.append(f"{i}. {url}")
+
+            if len(result['product_urls']) > 20:
+                output.append(f"\n... and {len(result['product_urls']) - 20} more")
+
+            output.append("\n**Next steps:**")
+            output.append("- Use `extract_gear_from_page(url)` to extract gear data from specific pages")
+            output.append("- Or analyze multiple pages in sequence")
+        else:
+            output.append("No obvious product pages found.")
+            output.append("Try using `fetch_webpage_content` on specific pages instead.")
+
+        return "\n".join(output)
+
+    except ValueError as e:
+        return f"Error mapping website: {str(e)}"
+
+
+def extract_gear_from_page(url: str) -> str:
+    """Extract structured gear information from a product page.
+
+    Uses AI-powered extraction to pull product data from any gear page.
+    Works with manufacturer sites, review sites, and retailers.
+
+    Args:
+        url: URL of the product page to extract from
+
+    Returns:
+        Extracted product information in structured format
+    """
+    try:
+        data = extract_product_data(url)
+
+        if not data or (isinstance(data, dict) and not data.get('product_name')):
+            return f"Could not extract product data from {url}. Try using fetch_webpage_content instead."
+
+        output = ["## Extracted Product Data\n"]
+
+        # Format the extracted data
+        if isinstance(data, dict):
+            for key, value in data.items():
+                if value and key != 'source_url':
+                    if isinstance(value, list):
+                        output.append(f"**{key.replace('_', ' ').title()}:**")
+                        for item in value:
+                            output.append(f"  - {item}")
+                    elif isinstance(value, dict):
+                        output.append(f"**{key.replace('_', ' ').title()}:**")
+                        for k, v in value.items():
+                            output.append(f"  - {k}: {v}")
+                    else:
+                        output.append(f"**{key.replace('_', ' ').title()}:** {value}")
+
+            output.append(f"\n**Source URL:** {url}")
+
+            # Reminder about duplicate check
+            output.append("\n---")
+            output.append("**IMPORTANT:** Before saving, use `find_similar_gear` to check for duplicates!")
+
+        return "\n".join(output)
+
+    except ValueError as e:
+        return f"Error extracting product data: {str(e)}"
+
+
 # All available tools for agents
 AGENT_TOOLS = [
     # Content fetching tools
@@ -181,6 +275,7 @@ AGENT_TOOLS = [
     save_insight_to_graph,
     search_graph,
     # Duplicate management tools
+    audit_duplicates,  # Scan entire database for duplicates
     merge_duplicate_gear,
     update_existing_gear,
     # Source tracking tools
@@ -188,6 +283,9 @@ AGENT_TOOLS = [
     get_previous_extraction_summary,
     save_extraction_result,
     link_extracted_gear_to_source,
+    # Website extraction tools
+    discover_product_pages,  # Map manufacturer sites to find product URLs
+    extract_gear_from_page,  # Extract structured data from single product page
 ]
 
 
