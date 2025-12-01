@@ -99,7 +99,7 @@ def render_unprocessed_video(video: dict):
         # Thumbnail
         with cols[0]:
             if video_id:
-                st.image(get_youtube_thumbnail(video_id), use_container_width=True)
+                st.image(get_youtube_thumbnail(video_id), width="stretch")
 
         # Title and channel
         with cols[1]:
@@ -168,7 +168,7 @@ def render_processed_video(video: dict):
         # Thumbnail
         with cols[0]:
             if video_id:
-                st.image(get_youtube_thumbnail(video_id), use_container_width=True)
+                st.image(get_youtube_thumbnail(video_id), width="stretch")
 
         # Info
         with cols[1]:
@@ -210,6 +210,9 @@ def render_processed_video(video: dict):
 
 def process_video(video: dict):
     """Process a single video and show results."""
+    import logging
+    logger = logging.getLogger(__name__)
+
     video_id = video.get("video_id", "")
     url = video.get("url", "")
     title = video.get("title", "")
@@ -219,13 +222,24 @@ def process_video(video: dict):
     video_context = st.session_state.video_contexts.get(video_id, "")
     combined_context = "\n\n".join(filter(None, [global_context, video_context]))
 
-    with st.spinner(f"Processing: {title}..."):
-        try:
+    # Store result in session state so it persists across reruns
+    result_key = f"process_result_{video_id}"
+
+    try:
+        with st.spinner(f"Processing: {title}..."):
+            logger.info(f"Starting extraction for: {title} ({url})")
+
             result = extract_gear_with_context(
                 source_url=url,
                 user_context=combined_context,
                 video_title=title,
             )
+
+            logger.info(f"Extraction complete. Result length: {len(result) if result else 0}")
+
+            if not result:
+                st.warning(f"Extraction returned empty result for: {title}")
+                result = "No content extracted from this video."
 
             # Update video status
             for v in st.session_state.playlist_videos:
@@ -234,14 +248,20 @@ def process_video(video: dict):
                     v["source_data"] = get_source_data(url)
                     break
 
+            # Store result in session state
+            st.session_state[result_key] = result
+
             st.success(f"Successfully processed: {title}")
 
-            # Show result
-            with st.expander("View Extraction Result", expanded=True):
-                st.markdown(result)
+    except Exception as e:
+        logger.error(f"Failed to process {title}: {str(e)}", exc_info=True)
+        st.error(f"Failed to process {title}: {str(e)}")
+        st.session_state[result_key] = f"Error: {str(e)}"
 
-        except Exception as e:
-            st.error(f"Failed to process {title}: {str(e)}")
+    # Show result (outside the try block so it shows even after errors)
+    if result_key in st.session_state:
+        with st.expander("View Extraction Result", expanded=True):
+            st.markdown(st.session_state[result_key])
 
     # Clear processing state
     st.session_state.processing_video_id = None
@@ -278,7 +298,8 @@ def render_playlist_manager():
         )
         if video:
             process_video(video)
-            st.rerun()
+            # Don't rerun immediately - let the user see the results
+            # The processing_video_id is cleared in process_video()
 
     # Show playlist info and videos
     if st.session_state.playlist_info:
