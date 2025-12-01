@@ -1011,3 +1011,219 @@ def import_glossary_terms(terms: list[dict]) -> dict:
             stats["failed"] += 1
 
     return stats
+
+
+# ============================================================================
+# Data Enrichment Functions
+# ============================================================================
+
+# Priority categories for enrichment (in order of importance)
+PRIORITY_CATEGORIES = [
+    "tent",
+    "backpack",
+    "sleeping_bag",
+    "sleeping_pad",
+    "stove",
+    "water_filter",
+    "headlamp",
+    "jacket",
+    "boots",
+    "trekking_poles",
+]
+
+
+def calculate_completeness_score(item: dict) -> float:
+    """Calculate a data completeness score for a gear item.
+
+    Score is 0.0 to 1.0 based on how many key fields are populated.
+
+    Args:
+        item: Gear item dictionary
+
+    Returns:
+        Completeness score (0.0 = empty, 1.0 = fully complete)
+    """
+    # Core fields (weighted higher)
+    core_fields = [
+        ("weight_grams", 2),
+        ("description", 2),
+        ("price_usd", 1),
+        ("materials", 1),
+        ("features", 1),
+        ("productUrl", 1),
+    ]
+
+    # Category-specific fields
+    category = (item.get("category") or "").lower()
+    category_fields = []
+
+    if "backpack" in category:
+        category_fields = [("volumeLiters", 2)]
+    elif "sleeping_bag" in category or "sleeping bag" in category:
+        category_fields = [("tempRatingF", 2), ("fillPower", 1)]
+    elif "sleeping_pad" in category or "sleeping pad" in category:
+        category_fields = [("rValue", 2)]
+    elif "tent" in category:
+        category_fields = [("capacityPersons", 2), ("waterproofRating", 1)]
+    elif "headlamp" in category:
+        category_fields = [("lumens", 2), ("burnTime", 1)]
+    elif "stove" in category:
+        category_fields = [("fuelType", 2)]
+    elif "filter" in category:
+        category_fields = [("filterType", 2), ("flowRate", 1)]
+
+    all_fields = core_fields + category_fields
+    total_weight = sum(w for _, w in all_fields)
+
+    score = 0
+    for field, weight in all_fields:
+        value = item.get(field)
+        if value is not None and value != "" and value != []:
+            score += weight
+
+    return score / total_weight if total_weight > 0 else 0.0
+
+
+def get_items_needing_enrichment(
+    limit: int = 50,
+    min_score: float = 0.0,
+    max_score: float = 0.5,
+    category: Optional[str] = None,
+) -> list[dict]:
+    """Find gear items that need data enrichment.
+
+    Returns items with low completeness scores, prioritized by category.
+
+    Args:
+        limit: Maximum items to return
+        min_score: Minimum completeness score (for pagination)
+        max_score: Maximum completeness score (items above this are "complete")
+        category: Optional category filter
+
+    Returns:
+        List of gear items with their completeness scores
+    """
+    category_filter = ""
+    params = {"limit": limit}
+
+    if category:
+        category_filter = "AND toLower(g.category) CONTAINS toLower($category)"
+        params["category"] = category
+
+    query = f"""
+    MATCH (g:GearItem)
+    WHERE g.name IS NOT NULL AND g.brand IS NOT NULL
+    {category_filter}
+    RETURN g.name as name,
+           g.brand as brand,
+           g.category as category,
+           g.weight_grams as weight_grams,
+           g.price_usd as price_usd,
+           g.description as description,
+           g.materials as materials,
+           g.features as features,
+           g.productUrl as productUrl,
+           g.volumeLiters as volumeLiters,
+           g.tempRatingF as tempRatingF,
+           g.rValue as rValue,
+           g.capacityPersons as capacityPersons,
+           g.lumens as lumens,
+           g.fuelType as fuelType,
+           g.filterType as filterType,
+           g.fillPower as fillPower,
+           g.waterproofRating as waterproofRating,
+           g.burnTime as burnTime,
+           g.flowRate as flowRate,
+           g.enrichedAt as enrichedAt,
+           id(g) as node_id
+    ORDER BY g.createdAt DESC
+    LIMIT {limit * 3}
+    """
+
+    results = execute_and_fetch(query, params)
+
+    # Calculate scores and filter
+    scored_items = []
+    for item in results:
+        score = calculate_completeness_score(item)
+        if min_score <= score <= max_score:
+            item["completeness_score"] = score
+            scored_items.append(item)
+
+    # Sort by category priority, then by score (lowest first)
+    def sort_key(item):
+        cat = (item.get("category") or "other").lower()
+        # Find priority index (lower = higher priority)
+        try:
+            priority = PRIORITY_CATEGORIES.index(cat)
+        except ValueError:
+            priority = 100  # Unknown categories last
+
+        return (priority, item.get("completeness_score", 1.0))
+
+    scored_items.sort(key=sort_key)
+
+    return scored_items[:limit]
+
+
+def get_enrichment_stats() -> dict:
+    """Get statistics on data enrichment status.
+
+    Returns:
+        Dictionary with enrichment statistics
+    """
+    query = """
+    MATCH (g:GearItem)
+    WITH g,
+         CASE WHEN g.weight_grams IS NOT NULL THEN 1 ELSE 0 END as has_weight,
+         CASE WHEN g.description IS NOT NULL AND g.description <> '' THEN 1 ELSE 0 END as has_desc,
+         CASE WHEN g.price_usd IS NOT NULL THEN 1 ELSE 0 END as has_price,
+         CASE WHEN g.materials IS NOT NULL THEN 1 ELSE 0 END as has_materials,
+         CASE WHEN g.features IS NOT NULL THEN 1 ELSE 0 END as has_features,
+         CASE WHEN g.enrichedAt IS NOT NULL THEN 1 ELSE 0 END as enriched
+    RETURN count(g) as total,
+           sum(has_weight) as with_weight,
+           sum(has_desc) as with_description,
+           sum(has_price) as with_price,
+           sum(has_materials) as with_materials,
+           sum(has_features) as with_features,
+           sum(enriched) as enriched_count
+    """
+    results = execute_and_fetch(query)
+
+    if results:
+        r = results[0]
+        total = r.get("total", 0)
+        return {
+            "total_items": total,
+            "with_weight": r.get("with_weight", 0),
+            "with_description": r.get("with_description", 0),
+            "with_price": r.get("with_price", 0),
+            "with_materials": r.get("with_materials", 0),
+            "with_features": r.get("with_features", 0),
+            "enriched_count": r.get("enriched_count", 0),
+            "weight_pct": round(r.get("with_weight", 0) / total * 100, 1) if total else 0,
+            "desc_pct": round(r.get("with_description", 0) / total * 100, 1) if total else 0,
+            "price_pct": round(r.get("with_price", 0) / total * 100, 1) if total else 0,
+        }
+
+    return {"total_items": 0}
+
+
+def mark_item_enriched(name: str, brand: str) -> bool:
+    """Mark a gear item as having been enriched.
+
+    Args:
+        name: Item name
+        brand: Item brand
+
+    Returns:
+        True if successful
+    """
+    query = """
+    MATCH (g:GearItem {name: $name, brand: $brand})
+    SET g.enrichedAt = datetime()
+    RETURN g.name
+    """
+    results = execute_and_fetch(query, {"name": name, "brand": brand})
+    return len(results) > 0

@@ -14,11 +14,22 @@ messages:
          - Brand/manufacturer
          - Model number (if mentioned)
          - Category (backpack, tent, sleeping_bag, sleeping_pad, clothing, footwear, cookware, water_filtration, navigation, lighting, trekking_poles, accessories, first_aid, other)
-         - Weight in grams (convert if given in other units)
+         - Weight in grams (convert if given in other units: 1oz = 28.35g)
          - Price in USD (convert if given in other currencies)
-         - Materials used
-         - Key features
+         - Materials used (fabrics, metals, etc.)
+         - Key features (list the main selling points)
+         - Description (what the product is, why it's good/bad)
          - Recommended use cases
+
+         **Category-Specific Specs** (IMPORTANT - capture these when available):
+         - Backpacks: volume_liters (e.g., 40L, 65L)
+         - Sleeping bags: temp_rating_f (comfort rating), fill_power (for down), fill_weight_grams
+         - Sleeping pads: r_value (insulation rating, e.g., 4.5)
+         - Tents: capacity_persons (1P, 2P, etc.), packed_weight_grams, waterproof_rating
+         - Headlamps: lumens, burn_time
+         - Stoves: fuel_type (canister, alcohol, wood, etc.), burn_time
+         - Water filters: filter_type (squeeze, pump, gravity, UV), flow_rate
+         - Jackets: waterproof_rating, fill_power (if down)
 
       2. **Manufacturers**: Extract company information when available:
          - Company name

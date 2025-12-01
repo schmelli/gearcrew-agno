@@ -191,6 +191,7 @@ with st.sidebar:
         "Agent Chat",
         "Playlist Manager",
         "Website Extractor",
+        "Data Enrichment",
         "Video Archive",
     ]
     view_mode = st.radio(
@@ -315,6 +316,11 @@ elif st.session_state.view_mode == "Website Extractor":
     from app.ui.website_extractor import render_website_extractor
 
     render_website_extractor()
+
+elif st.session_state.view_mode == "Data Enrichment":
+    from app.ui.enrichment_view import render_enrichment_view
+
+    render_enrichment_view()
 
 elif st.session_state.view_mode == "Video Archive":
     from app.ui.archive_view import render_archive_view
