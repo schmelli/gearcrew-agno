@@ -86,7 +86,7 @@ class EnrichmentAgent:
         """Request the agent to stop after current item."""
         self._stop_requested = True
 
-    def _build_search_query(self, name: str, brand: str, category: str) -> str:
+    def _build_search_query(self, name: str, brand: str, category: Optional[str]) -> str:
         """Build an effective search query for a gear item."""
         # Include category-specific terms to get spec pages
         category_terms = {
@@ -100,7 +100,9 @@ class EnrichmentAgent:
             "jacket": "specs weight waterproof rating",
         }
 
-        extra_terms = category_terms.get(category.lower(), "specs weight")
+        # Handle None category
+        cat_key = (category or "").lower()
+        extra_terms = category_terms.get(cat_key, "specs weight")
         return f"{brand} {name} {extra_terms}"
 
     def _extract_new_fields(
@@ -175,9 +177,9 @@ class EnrichmentAgent:
         Returns:
             EnrichmentResult with success status and details
         """
-        name = item.get("name", "")
-        brand = item.get("brand", "")
-        category = item.get("category", "other")
+        name = item.get("name") or ""
+        brand = item.get("brand") or ""
+        category = item.get("category") or "other"
 
         self.current_item = f"{brand} {name}"
         logger.info(f"Enriching: {self.current_item}")
