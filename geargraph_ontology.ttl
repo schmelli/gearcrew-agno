@@ -1074,3 +1074,179 @@
     rdfs:comment "Alternative names or spellings for this term" ;
     rdfs:domain :GlossaryTerm ;
     rdfs:range xsd:string .
+
+# ============================================================================
+# Additional Classes (aligned with database schema)
+# ============================================================================
+
+:VideoSource a owl:Class ;
+    rdfs:label "Video Source" ;
+    rdfs:comment "SOURCE_ENTITY: Processed video or webpage source",
+        "A YouTube video or webpage that has been analyzed for gear extraction" ;
+    rdfs:subClassOf :DataSource ;
+    skos:definition "A content source (video, article) that has been processed for gear information" .
+
+:MarketSegment a owl:Class ;
+    rdfs:label "Market Segment" ;
+    rdfs:comment "SEGMENT_ENTITY: Market categorization",
+        "A market segment for outdoor gear (ultralight, budget, professional)" ;
+    skos:definition "Market positioning and target audience for gear" .
+
+:Category a owl:Class ;
+    rdfs:label "Category" ;
+    rdfs:comment "CATEGORY_ENTITY: Gear categorization",
+        "A category for organizing gear items" ;
+    rdfs:subClassOf skos:Concept ;
+    skos:definition "Hierarchical category for gear classification" .
+
+:ProductFamily a owl:Class ;
+    rdfs:label "Product Family" ;
+    rdfs:comment "FAMILY_ENTITY: Product line grouping",
+        "A family of related products from the same manufacturer" ;
+    skos:definition "Group of product variants sharing a common base design" .
+
+# GearItem Subtypes (specialized gear categories)
+:Tent a owl:Class ;
+    rdfs:label "Tent" ;
+    rdfs:subClassOf :GearItem ;
+    skos:definition "Shelter equipment including tents, tarps, and bivies" .
+
+:Backpack a owl:Class ;
+    rdfs:label "Backpack" ;
+    rdfs:subClassOf :GearItem ;
+    skos:definition "Pack for carrying gear on the trail" .
+
+:SleepingBag a owl:Class ;
+    rdfs:label "Sleeping Bag" ;
+    rdfs:subClassOf :GearItem ;
+    skos:definition "Insulated bag for sleeping outdoors" .
+
+:SleepingPad a owl:Class ;
+    rdfs:label "Sleeping Pad" ;
+    rdfs:subClassOf :GearItem ;
+    skos:definition "Pad for insulation and comfort while sleeping" .
+
+:Stove a owl:Class ;
+    rdfs:label "Stove" ;
+    rdfs:subClassOf :GearItem ;
+    skos:definition "Portable cooking equipment" .
+
+:WaterFilter a owl:Class ;
+    rdfs:label "Water Filter" ;
+    rdfs:subClassOf :GearItem ;
+    skos:definition "Water purification and filtration equipment" .
+
+:Headlamp a owl:Class ;
+    rdfs:label "Headlamp" ;
+    rdfs:subClassOf :GearItem ;
+    skos:definition "Head-mounted lighting equipment" .
+
+:HikingShoe a owl:Class ;
+    rdfs:label "Hiking Shoe" ;
+    rdfs:subClassOf :GearItem ;
+    skos:definition "Footwear designed for hiking and backpacking" .
+
+# ============================================================================
+# Additional Relationships (aligned with database schema)
+# ============================================================================
+
+:manufacturesItem a owl:ObjectProperty ;
+    rdfs:label "manufactures item" ;
+    rdfs:comment "KEY_RELATIONSHIP: Brand produces gear item",
+        "Direct link from brand to gear item" ;
+    rdfs:domain :OutdoorBrand ;
+    rdfs:range :GearItem .
+
+:producedBy a owl:ObjectProperty ;
+    rdfs:label "produced by" ;
+    rdfs:comment "KEY_RELATIONSHIP: Gear item made by brand",
+        "Inverse of manufacturesItem" ;
+    rdfs:domain :GearItem ;
+    rdfs:range :OutdoorBrand ;
+    owl:inverseOf :manufacturesItem .
+
+:isVariantOf a owl:ObjectProperty ;
+    rdfs:label "is variant of" ;
+    rdfs:comment "KEY_RELATIONSHIP: Product variant relationship",
+        "Links a specific product to its product family" ;
+    rdfs:domain :GearItem ;
+    rdfs:range :ProductFamily .
+
+:hasVariant a owl:ObjectProperty ;
+    rdfs:label "has variant" ;
+    rdfs:comment "KEY_RELATIONSHIP: Product family has variant",
+        "Links product family to specific variants" ;
+    rdfs:domain :ProductFamily ;
+    rdfs:range :GearItem ;
+    owl:inverseOf :isVariantOf .
+
+:inCategory a owl:ObjectProperty ;
+    rdfs:label "in category" ;
+    rdfs:comment "KEY_RELATIONSHIP: Gear belongs to category",
+        "Links gear item to its category" ;
+    rdfs:domain :GearItem ;
+    rdfs:range :Category .
+
+:belongsToSegment a owl:ObjectProperty ;
+    rdfs:label "belongs to segment" ;
+    rdfs:comment "KEY_RELATIONSHIP: Market segment membership",
+        "Links gear or brand to market segment" ;
+    rdfs:range :MarketSegment .
+
+:extractedFrom a owl:ObjectProperty ;
+    rdfs:label "extracted from" ;
+    rdfs:comment "KEY_RELATIONSHIP: Source tracking",
+        "Links gear item to the source it was extracted from" ;
+    rdfs:domain :GearItem ;
+    rdfs:range :VideoSource .
+
+:hasTip a owl:ObjectProperty ;
+    rdfs:label "has tip" ;
+    rdfs:comment "KEY_RELATIONSHIP: Gear has insight/tip",
+        "Links gear item to associated insights" ;
+    rdfs:domain :GearItem ;
+    rdfs:range :GearInsight .
+
+:partOf a owl:ObjectProperty ;
+    rdfs:label "part of" ;
+    rdfs:comment "KEY_RELATIONSHIP: Component relationship",
+        "Links a component to its parent item" ;
+    rdfs:domain :GearItem ;
+    rdfs:range :GearItem .
+
+# VideoSource properties
+:videoUrl a owl:DatatypeProperty ;
+    rdfs:label "video URL" ;
+    rdfs:comment "URL of the video source" ;
+    rdfs:domain :VideoSource ;
+    rdfs:range xsd:anyURI .
+
+:videoTitle a owl:DatatypeProperty ;
+    rdfs:label "video title" ;
+    rdfs:comment "Title of the video" ;
+    rdfs:domain :VideoSource ;
+    rdfs:range xsd:string .
+
+:channelName a owl:DatatypeProperty ;
+    rdfs:label "channel name" ;
+    rdfs:comment "Name of the YouTube channel or author" ;
+    rdfs:domain :VideoSource ;
+    rdfs:range xsd:string .
+
+:processedAt a owl:DatatypeProperty ;
+    rdfs:label "processed at" ;
+    rdfs:comment "When the source was processed" ;
+    rdfs:domain :VideoSource ;
+    rdfs:range xsd:dateTime .
+
+:gearItemsFound a owl:DatatypeProperty ;
+    rdfs:label "gear items found" ;
+    rdfs:comment "Number of gear items extracted from source" ;
+    rdfs:domain :VideoSource ;
+    rdfs:range xsd:integer .
+
+:extractionSummary a owl:DatatypeProperty ;
+    rdfs:label "extraction summary" ;
+    rdfs:comment "Summary of what was extracted from the source" ;
+    rdfs:domain :VideoSource ;
+    rdfs:range xsd:string .
