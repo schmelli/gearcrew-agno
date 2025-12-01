@@ -11,6 +11,9 @@ from urllib.parse import urlparse, parse_qs
 import streamlit as st
 from dotenv import load_dotenv
 
+# Import task queue at module level to avoid lazy import issues
+from app.task_queue import get_task_queue, TaskStatus
+
 load_dotenv()
 
 
@@ -97,8 +100,6 @@ def render_youtube_preview(url: str):
 
 def render_task_status_sidebar():
     """Render the task queue status in the sidebar."""
-    from app.task_queue import get_task_queue, TaskStatus
-
     task_queue = get_task_queue()
     active_tasks = task_queue.get_active_tasks()
     recent_completed = task_queue.get_recent_completed(limit=3)
@@ -138,8 +139,6 @@ def render_task_status_sidebar():
 
 def check_and_display_completed_tasks():
     """Check for newly completed tasks and add to chat history."""
-    from app.task_queue import get_task_queue, TaskStatus
-
     if "processed_task_ids" not in st.session_state:
         st.session_state.processed_task_ids = set()
 
@@ -215,7 +214,6 @@ with st.sidebar:
     st.info(f"Memgraph: {memgraph_host}")
 
 # Auto-refresh when tasks are active
-from app.task_queue import get_task_queue
 if get_task_queue().get_active_tasks():
     time.sleep(0.5)  # Small delay to prevent hammering
     st.rerun()
@@ -227,8 +225,6 @@ if st.session_state.view_mode == "Graph Explorer":
     render_graph_explorer()
 
 elif st.session_state.view_mode == "Agent Chat":
-    from app.task_queue import get_task_queue, TaskStatus
-
     st.header("GearCrew Agent Chat")
 
     st.info(
