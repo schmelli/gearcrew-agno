@@ -285,13 +285,11 @@ def extract_product_data(url: str, schema: dict = None) -> dict:
     try:
         client = _get_firecrawl_client()
 
-        # Firecrawl v2 extract API
+        # Firecrawl v2 extract API - pass schema and prompt as direct kwargs
         result = client.extract(
             urls=[url],
-            params={
-                "schema": schema,
-                "prompt": "Extract product information for outdoor/hiking/backpacking gear."
-            }
+            schema=schema,
+            prompt="Extract product information for outdoor/hiking/backpacking gear."
         )
 
         # Handle response
