@@ -7,7 +7,7 @@ for querying, verifying, and writing gear data.
 import os
 import json
 import logging
-from typing import Optional
+from typing import Optional, Any
 
 from rdflib import Graph, RDF, RDFS, OWL
 
@@ -51,6 +51,54 @@ from app.db.memgraph import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# Value Parsing Helpers (handle LLM outputs like "unknown", "N/A", etc.)
+# ============================================================================
+
+
+def _parse_int(value: Any) -> Optional[int]:
+    """Safely parse a value to int, returning None for invalid values."""
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        # Filter out non-numeric strings like "unknown", "N/A", etc.
+        cleaned = value.strip().lower()
+        if cleaned in ("", "unknown", "n/a", "na", "none", "null", "-", "?"):
+            return None
+        try:
+            return int(float(cleaned))
+        except (ValueError, TypeError):
+            return None
+    return None
+
+
+def _parse_float(value: Any) -> Optional[float]:
+    """Safely parse a value to float, returning None for invalid values."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        # Filter out non-numeric strings
+        cleaned = value.strip().lower().replace("$", "").replace(",", "")
+        if cleaned in ("", "unknown", "n/a", "na", "none", "null", "-", "?"):
+            return None
+        try:
+            return float(cleaned)
+        except (ValueError, TypeError):
+            return None
+    return None
+
+
+# ============================================================================
+# Duplicate Detection Tools
+# ============================================================================
 
 
 def find_similar_gear(name: str, brand: Optional[str] = None) -> str:
@@ -228,8 +276,8 @@ def save_gear_to_graph(
     name: str,
     brand: str,
     category: str,
-    weight_grams: Optional[int] = None,
-    price_usd: Optional[float] = None,
+    weight_grams: Any = None,
+    price_usd: Any = None,
     product_url: Optional[str] = None,
     image_url: Optional[str] = None,
     materials: Optional[str] = None,
@@ -237,17 +285,17 @@ def save_gear_to_graph(
     description: Optional[str] = None,
     features: Optional[str] = None,
     # Category-specific specs (pass as needed based on category)
-    volume_liters: Optional[float] = None,
-    temp_rating_f: Optional[int] = None,
-    temp_rating_c: Optional[int] = None,
-    r_value: Optional[float] = None,
-    capacity_persons: Optional[int] = None,
-    packed_weight_grams: Optional[int] = None,
+    volume_liters: Any = None,
+    temp_rating_f: Any = None,
+    temp_rating_c: Any = None,
+    r_value: Any = None,
+    capacity_persons: Any = None,
+    packed_weight_grams: Any = None,
     packed_size: Optional[str] = None,
-    fill_power: Optional[int] = None,
-    fill_weight_grams: Optional[int] = None,
+    fill_power: Any = None,
+    fill_weight_grams: Any = None,
     waterproof_rating: Optional[str] = None,
-    lumens: Optional[int] = None,
+    lumens: Any = None,
     burn_time: Optional[str] = None,
     fuel_type: Optional[str] = None,
     filter_type: Optional[str] = None,
@@ -258,12 +306,14 @@ def save_gear_to_graph(
     Uses MERGE to prevent duplicates - will update existing records.
     Pass category-specific parameters based on the gear type.
 
+    Note: Numeric fields accept "unknown", "N/A" etc. - these will be ignored.
+
     Args:
         name: Product name (required)
         brand: Brand/manufacturer name (required)
         category: Gear category (backpack, tent, sleeping_bag, etc.)
-        weight_grams: Weight in grams
-        price_usd: Price in USD
+        weight_grams: Weight in grams (integer, or "unknown" to skip)
+        price_usd: Price in USD (number, or "unknown" to skip)
         product_url: Official product page URL
         image_url: Product image URL
         materials: Comma-separated list of materials
@@ -293,29 +343,30 @@ def save_gear_to_graph(
         if features:
             features_list = [f.strip() for f in features.split(",")]
 
+        # Parse all numeric fields safely (handles "unknown", "N/A", etc.)
         success = merge_gear_item(
             name=name,
             brand=brand,
             category=category,
-            weight_grams=weight_grams,
-            price_usd=price_usd,
+            weight_grams=_parse_int(weight_grams),
+            price_usd=_parse_float(price_usd),
             product_url=product_url,
             image_url=image_url,
             materials=materials_list,
             source_url=source_url,
             description=description,
             features=features_list,
-            volume_liters=volume_liters,
-            temp_rating_f=temp_rating_f,
-            temp_rating_c=temp_rating_c,
-            r_value=r_value,
-            capacity_persons=capacity_persons,
-            packed_weight_grams=packed_weight_grams,
+            volume_liters=_parse_float(volume_liters),
+            temp_rating_f=_parse_int(temp_rating_f),
+            temp_rating_c=_parse_int(temp_rating_c),
+            r_value=_parse_float(r_value),
+            capacity_persons=_parse_int(capacity_persons),
+            packed_weight_grams=_parse_int(packed_weight_grams),
             packed_size=packed_size,
-            fill_power=fill_power,
-            fill_weight_grams=fill_weight_grams,
+            fill_power=_parse_int(fill_power),
+            fill_weight_grams=_parse_int(fill_weight_grams),
             waterproof_rating=waterproof_rating,
-            lumens=lumens,
+            lumens=_parse_int(lumens),
             burn_time=burn_time,
             fuel_type=fuel_type,
             filter_type=filter_type,
@@ -586,8 +637,8 @@ def merge_duplicate_gear(
 def update_existing_gear(
     name: str,
     brand: str,
-    weight_grams: Optional[int] = None,
-    price_usd: Optional[float] = None,
+    weight_grams: Any = None,
+    price_usd: Any = None,
     category: Optional[str] = None,
     product_url: Optional[str] = None,
 ) -> str:
@@ -599,8 +650,8 @@ def update_existing_gear(
     Args:
         name: Exact name of the existing item
         brand: Exact brand of the existing item
-        weight_grams: Updated weight (optional)
-        price_usd: Updated price (optional)
+        weight_grams: Updated weight in grams (optional, integer or "unknown" to skip)
+        price_usd: Updated price in USD (optional, number or "unknown" to skip)
         category: Updated category (optional)
         product_url: Updated product URL (optional)
 
@@ -611,13 +662,17 @@ def update_existing_gear(
         set_parts = []
         params = {"name": name, "brand": brand}
 
-        if weight_grams is not None:
-            set_parts.append("g.weight_grams = $weight")
-            params["weight"] = weight_grams
+        # Parse and validate numeric fields
+        parsed_weight = _parse_int(weight_grams)
+        parsed_price = _parse_float(price_usd)
 
-        if price_usd is not None:
+        if parsed_weight is not None:
+            set_parts.append("g.weight_grams = $weight")
+            params["weight"] = parsed_weight
+
+        if parsed_price is not None:
             set_parts.append("g.price_usd = $price")
-            params["price"] = price_usd
+            params["price"] = parsed_price
 
         if category:
             set_parts.append("g.category = $category")
