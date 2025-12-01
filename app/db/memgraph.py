@@ -779,3 +779,191 @@ def merge_gear_items(source_name: str, source_brand: str, target_name: str, targ
         "target_brand": target_brand,
     })
     return len(results) > 0
+
+
+# Glossary term functions
+
+def merge_glossary_term(
+    name: str,
+    definition: str,
+    category: Optional[str] = None,
+    aliases: Optional[list[str]] = None,
+) -> bool:
+    """Create or update a glossary term.
+
+    Args:
+        name: The term name (e.g., "Titanium", "Pertex", "tunnel tent")
+        definition: Full definition of the term
+        category: Category (material, technology, design, technique, concept)
+        aliases: Alternative names or spellings
+
+    Returns:
+        True if successful
+    """
+    params = {
+        "name": name,
+        "definition": definition,
+    }
+
+    set_parts = ["g.definition = $definition"]
+
+    if category:
+        set_parts.append("g.category = $category")
+        params["category"] = category
+
+    if aliases:
+        set_parts.append("g.aliases = $aliases")
+        params["aliases"] = aliases
+
+    set_clause = ", ".join(set_parts)
+
+    query = f"""
+    MERGE (g:GlossaryTerm {{name: $name}})
+    ON CREATE SET g.createdAt = datetime(), {set_clause}
+    ON MATCH SET g.updatedAt = datetime(), {set_clause}
+    RETURN g
+    """
+
+    return execute_cypher(query, params)
+
+
+def get_glossary_term(name: str) -> Optional[dict]:
+    """Get a glossary term by name or alias.
+
+    Args:
+        name: Term name or alias to search for
+
+    Returns:
+        Term data if found, None otherwise
+    """
+    query = """
+    MATCH (g:GlossaryTerm)
+    WHERE toLower(g.name) = toLower($name)
+       OR toLower($name) IN [alias IN g.aliases | toLower(alias)]
+    RETURN g.name as name, g.definition as definition,
+           g.category as category, g.aliases as aliases
+    LIMIT 1
+    """
+    results = execute_and_fetch(query, {"name": name})
+    return results[0] if results else None
+
+
+def get_all_glossary_terms(category: Optional[str] = None) -> list[dict]:
+    """Get all glossary terms, optionally filtered by category.
+
+    Args:
+        category: Optional category filter
+
+    Returns:
+        List of glossary terms
+    """
+    if category:
+        query = """
+        MATCH (g:GlossaryTerm)
+        WHERE g.category = $category
+        RETURN g.name as name, g.definition as definition,
+               g.category as category, g.aliases as aliases
+        ORDER BY g.name
+        """
+        return execute_and_fetch(query, {"category": category})
+    else:
+        query = """
+        MATCH (g:GlossaryTerm)
+        RETURN g.name as name, g.definition as definition,
+               g.category as category, g.aliases as aliases
+        ORDER BY g.name
+        """
+        return execute_and_fetch(query)
+
+
+def link_gear_to_glossary_term(
+    gear_name: str,
+    gear_brand: str,
+    term_name: str,
+) -> bool:
+    """Link a gear item to a glossary term.
+
+    Args:
+        gear_name: Name of the gear item
+        gear_brand: Brand of the gear item
+        term_name: Name of the glossary term
+
+    Returns:
+        True if successful
+    """
+    query = """
+    MATCH (g:GearItem {name: $gear_name, brand: $gear_brand})
+    MATCH (t:GlossaryTerm {name: $term_name})
+    MERGE (g)-[:RELATES_TO]->(t)
+    RETURN g.name as gear, t.name as term
+    """
+    results = execute_and_fetch(query, {
+        "gear_name": gear_name,
+        "gear_brand": gear_brand,
+        "term_name": term_name,
+    })
+    return len(results) > 0
+
+
+def find_gear_by_glossary_term(term_name: str) -> list[dict]:
+    """Find all gear items related to a glossary term.
+
+    Args:
+        term_name: Name of the glossary term
+
+    Returns:
+        List of gear items linked to this term
+    """
+    query = """
+    MATCH (g:GearItem)-[:RELATES_TO]->(t:GlossaryTerm)
+    WHERE toLower(t.name) = toLower($term_name)
+       OR toLower($term_name) IN [alias IN t.aliases | toLower(alias)]
+    RETURN g.name as name, g.brand as brand, g.category as category,
+           g.weight_grams as weight_grams
+    ORDER BY g.name
+    """
+    return execute_and_fetch(query, {"term_name": term_name})
+
+
+def import_glossary_terms(terms: list[dict]) -> dict:
+    """Bulk import glossary terms from a list of dictionaries.
+
+    Args:
+        terms: List of term dictionaries with keys:
+               - name (required)
+               - definition (required)
+               - category (optional)
+               - aliases (optional list)
+
+    Returns:
+        Dictionary with import statistics
+    """
+    stats = {"created": 0, "updated": 0, "failed": 0}
+
+    for term in terms:
+        name = term.get("name")
+        definition = term.get("definition")
+
+        if not name or not definition:
+            stats["failed"] += 1
+            continue
+
+        # Check if exists
+        existing = get_glossary_term(name)
+
+        success = merge_glossary_term(
+            name=name,
+            definition=definition,
+            category=term.get("category"),
+            aliases=term.get("aliases"),
+        )
+
+        if success:
+            if existing:
+                stats["updated"] += 1
+            else:
+                stats["created"] += 1
+        else:
+            stats["failed"] += 1
+
+    return stats

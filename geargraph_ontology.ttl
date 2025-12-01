@@ -1036,3 +1036,41 @@
         "PRIMARY_ENTITY: Main entity type for outdoor gear extraction" ;
     rdfs:subClassOf schema1:Product ;
     skos:definition "Any piece of outdoor equipment designed for activities like hiking, camping, or mountaineering" .
+
+:GlossaryTerm a owl:Class ;
+    rdfs:label "Glossary Term" ;
+    rdfs:comment "GLOSSARY_ENTITY: Domain terminology and concepts",
+        "Technical term or concept from outdoor/backpacking domain" ;
+    rdfs:subClassOf skos:Concept ;
+    skos:definition "A term, material, technology, or concept commonly used in hiking and backpacking" .
+
+:relatesToTerm a owl:ObjectProperty ;
+    rdfs:label "relates to term" ;
+    rdfs:comment "KEY_RELATIONSHIP: Links gear to glossary concepts",
+        "Connects gear items to relevant glossary terms" ;
+    rdfs:domain :GearItem ;
+    rdfs:range :GlossaryTerm .
+
+:termName a owl:DatatypeProperty ;
+    rdfs:label "term name" ;
+    rdfs:comment "The glossary term or phrase" ;
+    rdfs:domain :GlossaryTerm ;
+    rdfs:range xsd:string .
+
+:termDefinition a owl:DatatypeProperty ;
+    rdfs:label "term definition" ;
+    rdfs:comment "Full definition of the glossary term" ;
+    rdfs:domain :GlossaryTerm ;
+    rdfs:range xsd:string .
+
+:termCategory a owl:DatatypeProperty ;
+    rdfs:label "term category" ;
+    rdfs:comment "Category of the term (material, technology, design, technique)" ;
+    rdfs:domain :GlossaryTerm ;
+    rdfs:range xsd:string .
+
+:termAliases a owl:DatatypeProperty ;
+    rdfs:label "term aliases" ;
+    rdfs:comment "Alternative names or spellings for this term" ;
+    rdfs:domain :GlossaryTerm ;
+    rdfs:range xsd:string .

@@ -38,6 +38,13 @@ from app.tools.geargraph import (
     merge_duplicate_gear,
     update_existing_gear,
     audit_duplicates,
+    # Glossary tools
+    save_glossary_term,
+    lookup_glossary_term,
+    list_glossary_terms,
+    link_gear_to_term,
+    find_gear_with_term,
+    import_glossary_from_json,
 )
 
 load_dotenv()
@@ -286,6 +293,13 @@ AGENT_TOOLS = [
     # Website extraction tools
     discover_product_pages,  # Map manufacturer sites to find product URLs
     extract_gear_from_page,  # Extract structured data from single product page
+    # Glossary tools
+    save_glossary_term,
+    lookup_glossary_term,
+    list_glossary_terms,
+    link_gear_to_term,
+    find_gear_with_term,
+    import_glossary_from_json,
 ]
 
 

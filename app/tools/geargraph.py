@@ -28,6 +28,13 @@ from app.db.memgraph import (
     find_potential_duplicates,
     merge_gear_items,
     scan_for_duplicates,
+    # Glossary functions
+    merge_glossary_term,
+    get_glossary_term,
+    get_all_glossary_terms,
+    link_gear_to_glossary_term,
+    find_gear_by_glossary_term,
+    import_glossary_terms,
 )
 
 logger = logging.getLogger(__name__)
@@ -666,3 +673,223 @@ def execute_read_query(cypher: str) -> str:
     except Exception as e:
         logger.error(f"Query execution error: {e}")
         return f"Query error: {str(e)}"
+
+
+# Glossary term agent tools
+
+def save_glossary_term(
+    name: str,
+    definition: str,
+    category: Optional[str] = None,
+    aliases: Optional[str] = None,
+) -> str:
+    """Save a glossary term to the GearGraph database.
+
+    Use this to add terminology from the outdoor/backpacking domain.
+    Categories include: material, technology, design, technique, concept.
+
+    Args:
+        name: The term (e.g., "Titanium", "Pertex", "tunnel tent")
+        definition: Full definition explaining the term
+        category: Term category (material, technology, design, technique, concept)
+        aliases: Comma-separated alternative names (e.g., "Ti, titanium alloy")
+
+    Returns:
+        Success or error message
+    """
+    try:
+        aliases_list = None
+        if aliases:
+            aliases_list = [a.strip() for a in aliases.split(",")]
+
+        success = merge_glossary_term(
+            name=name,
+            definition=definition,
+            category=category,
+            aliases=aliases_list,
+        )
+
+        if success:
+            return f"Successfully saved glossary term: '{name}'"
+        return f"Failed to save glossary term: '{name}'"
+
+    except Exception as e:
+        logger.error(f"Error saving glossary term: {e}")
+        return f"Error: {str(e)}"
+
+
+def lookup_glossary_term(term: str) -> str:
+    """Look up a glossary term by name or alias.
+
+    Args:
+        term: The term or alias to look up
+
+    Returns:
+        Term definition and details, or not found message
+    """
+    try:
+        result = get_glossary_term(term)
+
+        if result:
+            output = [f"## {result['name']}"]
+            if result.get("category"):
+                output.append(f"**Category:** {result['category']}")
+            output.append(f"\n{result['definition']}")
+            if result.get("aliases"):
+                output.append(f"\n**Also known as:** {', '.join(result['aliases'])}")
+            return "\n".join(output)
+
+        return f"Glossary term '{term}' not found."
+
+    except Exception as e:
+        logger.error(f"Error looking up glossary term: {e}")
+        return f"Error: {str(e)}"
+
+
+def list_glossary_terms(category: Optional[str] = None) -> str:
+    """List all glossary terms, optionally filtered by category.
+
+    Args:
+        category: Optional category filter (material, technology, design, technique, concept)
+
+    Returns:
+        List of glossary terms
+    """
+    try:
+        terms = get_all_glossary_terms(category)
+
+        if not terms:
+            if category:
+                return f"No glossary terms found in category '{category}'"
+            return "No glossary terms in database."
+
+        output = [f"## Glossary Terms ({len(terms)} total)"]
+        if category:
+            output[0] += f" - Category: {category}"
+
+        # Group by category
+        by_category = {}
+        for term in terms:
+            cat = term.get("category") or "Uncategorized"
+            if cat not in by_category:
+                by_category[cat] = []
+            by_category[cat].append(term)
+
+        for cat, cat_terms in sorted(by_category.items()):
+            output.append(f"\n### {cat}")
+            for term in cat_terms:
+                output.append(f"- **{term['name']}**: {term['definition'][:100]}...")
+
+        return "\n".join(output)
+
+    except Exception as e:
+        logger.error(f"Error listing glossary terms: {e}")
+        return f"Error: {str(e)}"
+
+
+def link_gear_to_term(
+    gear_name: str,
+    gear_brand: str,
+    term_name: str,
+) -> str:
+    """Link a gear item to a glossary term.
+
+    Creates a RELATES_TO relationship between the gear and the term.
+    Use this to connect products to their relevant materials, technologies, etc.
+
+    Args:
+        gear_name: Name of the gear item
+        gear_brand: Brand of the gear item
+        term_name: Name of the glossary term to link
+
+    Returns:
+        Success or error message
+    """
+    try:
+        success = link_gear_to_glossary_term(gear_name, gear_brand, term_name)
+
+        if success:
+            return f"Linked '{gear_name}' by {gear_brand} to glossary term '{term_name}'"
+        return f"Failed to link - ensure both the gear item and glossary term exist"
+
+    except Exception as e:
+        logger.error(f"Error linking gear to term: {e}")
+        return f"Error: {str(e)}"
+
+
+def find_gear_with_term(term: str) -> str:
+    """Find all gear items that relate to a glossary term.
+
+    Args:
+        term: Glossary term name or alias
+
+    Returns:
+        List of gear items linked to this term
+    """
+    try:
+        items = find_gear_by_glossary_term(term)
+
+        if not items:
+            return f"No gear items linked to glossary term '{term}'"
+
+        output = [f"## Gear items related to '{term}' ({len(items)} found)"]
+        for item in items:
+            line = f"- **{item['name']}** by {item['brand']}"
+            if item.get("category"):
+                line += f" [{item['category']}]"
+            if item.get("weight_grams"):
+                line += f" - {item['weight_grams']}g"
+            output.append(line)
+
+        return "\n".join(output)
+
+    except Exception as e:
+        logger.error(f"Error finding gear: {e}")
+        return f"Error: {str(e)}"
+
+
+def import_glossary_from_json(json_data: str) -> str:
+    """Import glossary terms from JSON data.
+
+    Expects a JSON array of term objects with:
+    - name (required): The term
+    - definition (required): Full definition
+    - category (optional): material, technology, design, technique, concept
+    - aliases (optional): List of alternative names
+
+    Example:
+    [
+        {
+            "name": "Titanium",
+            "definition": "A lightweight, strong metal...",
+            "category": "material",
+            "aliases": ["Ti", "titanium alloy"]
+        }
+    ]
+
+    Args:
+        json_data: JSON string containing array of term objects
+
+    Returns:
+        Import statistics
+    """
+    try:
+        terms = json.loads(json_data)
+
+        if not isinstance(terms, list):
+            return "Error: JSON must be an array of term objects"
+
+        stats = import_glossary_terms(terms)
+
+        return (
+            f"Glossary import complete!\n"
+            f"- Created: {stats['created']} new terms\n"
+            f"- Updated: {stats['updated']} existing terms\n"
+            f"- Failed: {stats['failed']} terms"
+        )
+
+    except json.JSONDecodeError as e:
+        return f"Invalid JSON: {str(e)}"
+    except Exception as e:
+        logger.error(f"Error importing glossary: {e}")
+        return f"Error: {str(e)}"
