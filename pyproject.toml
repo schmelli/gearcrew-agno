@@ -20,6 +20,7 @@ dependencies = [
     "rdflib>=7.5.0",
     "streamlit>=1.51.0",
     "youtube-transcript-api>=1.2.3",
+    "yt-dlp>=2025.11.12",
 ]
 
 [tool.pytest.ini_options]

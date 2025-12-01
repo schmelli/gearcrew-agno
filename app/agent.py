@@ -16,7 +16,11 @@ from agno.models.anthropic import Claude
 from dotenv import load_dotenv
 
 from app.models.gear import ExtractionResult, GearItem, KnowledgeFact, Manufacturer
-from app.tools.youtube import get_youtube_transcript
+from app.tools.youtube import (
+    get_youtube_transcript,
+    get_playlist_videos,
+    get_playlist_info,
+)
 from app.tools.web_scraper import (
     scrape_webpage,
     search_web,
@@ -138,6 +142,70 @@ def fetch_youtube_transcript(video_url: str) -> str:
         return get_youtube_transcript(video_url)
     except ValueError as e:
         return f"Error fetching transcript: {str(e)}"
+
+
+def fetch_youtube_playlist(playlist_url: str) -> str:
+    """Fetch videos from a YouTube playlist and show which are already processed.
+
+    Use this when given a YouTube playlist URL to see all videos and identify
+    which ones have not yet been processed for gear extraction.
+
+    Args:
+        playlist_url: YouTube playlist URL (e.g., https://youtube.com/playlist?list=...)
+
+    Returns:
+        List of videos with processing status
+    """
+    try:
+        # Get playlist info
+        info = get_playlist_info(playlist_url)
+        videos = get_playlist_videos(playlist_url)
+
+        output = [f"## Playlist: {info['title']}"]
+        output.append(f"Channel: {info['channel']}")
+        output.append(f"Total videos: {info['video_count']}\n")
+
+        # Check which videos have been processed
+        processed_count = 0
+        unprocessed = []
+
+        output.append("### Videos:\n")
+        for i, video in enumerate(videos, 1):
+            url = video["url"]
+            is_processed = check_video_already_processed(url)
+
+            status = "✅ Processed" if "already been processed" in is_processed else "⏳ Not processed"
+            if "not yet been processed" in is_processed:
+                unprocessed.append(video)
+            else:
+                processed_count += 1
+
+            duration_str = ""
+            if video.get("duration"):
+                mins = video["duration"] // 60
+                secs = video["duration"] % 60
+                duration_str = f" ({mins}:{secs:02d})"
+
+            output.append(f"{i}. [{status}] {video['title']}{duration_str}")
+            output.append(f"   {url}\n")
+
+        # Summary
+        output.append("---")
+        output.append(f"**Summary:** {processed_count} processed, {len(unprocessed)} remaining\n")
+
+        if unprocessed:
+            output.append("**Unprocessed videos to extract from:**")
+            for v in unprocessed[:10]:
+                output.append(f"- {v['title']}: {v['url']}")
+            if len(unprocessed) > 10:
+                output.append(f"... and {len(unprocessed) - 10} more")
+
+            output.append("\n**Next step:** Use `fetch_youtube_transcript(url)` on each unprocessed video to extract gear info.")
+
+        return "\n".join(output)
+
+    except ValueError as e:
+        return f"Error fetching playlist: {str(e)}"
 
 
 def fetch_webpage_content(url: str) -> str:
@@ -272,6 +340,7 @@ def extract_gear_from_page(url: str) -> str:
 AGENT_TOOLS = [
     # Content fetching tools
     fetch_youtube_transcript,
+    fetch_youtube_playlist,  # Fetch playlist and check which videos need processing
     fetch_webpage_content,
     search_gear_info,
     # GearGraph database tools - DUPLICATE CHECK FIRST!

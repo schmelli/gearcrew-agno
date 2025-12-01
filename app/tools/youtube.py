@@ -1,8 +1,9 @@
-"""YouTube transcript extraction tool."""
+"""YouTube transcript and playlist extraction tools."""
 
 import re
 from typing import Optional
 from youtube_transcript_api import YouTubeTranscriptApi
+from yt_dlp import YoutubeDL
 
 
 def extract_video_id(url_or_id: str) -> Optional[str]:
@@ -74,3 +75,105 @@ def get_youtube_transcript(url_or_id: str, languages: list[str] = None) -> str:
             raise ValueError(f"Video unavailable or no transcript: {video_id}")
         else:
             raise ValueError(f"Error fetching transcript for {video_id}: {str(e)}")
+
+
+def extract_playlist_id(url: str) -> Optional[str]:
+    """Extract YouTube playlist ID from URL.
+
+    Args:
+        url: YouTube playlist URL
+
+    Returns:
+        Playlist ID or None if extraction failed
+    """
+    patterns = [
+        r"[?&]list=([a-zA-Z0-9_-]+)",
+        r"youtube\.com\/playlist\?list=([a-zA-Z0-9_-]+)",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+
+    return None
+
+
+def get_playlist_videos(playlist_url: str) -> list[dict]:
+    """Fetch list of videos from a YouTube playlist.
+
+    Args:
+        playlist_url: YouTube playlist URL
+
+    Returns:
+        List of video info dicts with keys: video_id, title, url, duration, channel
+
+    Raises:
+        ValueError: If playlist cannot be fetched
+    """
+    playlist_id = extract_playlist_id(playlist_url)
+    if not playlist_id:
+        raise ValueError(f"Could not extract playlist ID from: {playlist_url}")
+
+    ydl_opts = {
+        "extract_flat": True,
+        "quiet": True,
+        "no_warnings": True,
+        "ignoreerrors": True,
+    }
+
+    try:
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(playlist_url, download=False)
+
+            if not info or "entries" not in info:
+                raise ValueError(f"Could not fetch playlist: {playlist_url}")
+
+            videos = []
+            for entry in info["entries"]:
+                if entry is None:
+                    continue
+
+                video_id = entry.get("id", "")
+                videos.append({
+                    "video_id": video_id,
+                    "title": entry.get("title", "Unknown"),
+                    "url": f"https://www.youtube.com/watch?v={video_id}",
+                    "duration": entry.get("duration"),
+                    "channel": entry.get("channel") or entry.get("uploader", "Unknown"),
+                })
+
+            return videos
+
+    except Exception as e:
+        raise ValueError(f"Error fetching playlist {playlist_url}: {str(e)}")
+
+
+def get_playlist_info(playlist_url: str) -> dict:
+    """Get playlist metadata (title, channel, video count).
+
+    Args:
+        playlist_url: YouTube playlist URL
+
+    Returns:
+        Dict with playlist_id, title, channel, video_count
+    """
+    ydl_opts = {
+        "extract_flat": True,
+        "quiet": True,
+        "no_warnings": True,
+    }
+
+    try:
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(playlist_url, download=False)
+
+            return {
+                "playlist_id": info.get("id", ""),
+                "title": info.get("title", "Unknown Playlist"),
+                "channel": info.get("channel") or info.get("uploader", "Unknown"),
+                "video_count": len(info.get("entries", [])),
+            }
+
+    except Exception as e:
+        raise ValueError(f"Error fetching playlist info: {str(e)}")
