@@ -10,6 +10,7 @@ import os
 import re
 from urllib.parse import urlparse
 
+import httpx
 from firecrawl import FirecrawlApp
 
 # Import Playwright scraper functions
@@ -35,6 +36,7 @@ USE_PLAYWRIGHT_FIRST = True  # Set to False to use Firecrawl as primary
 __all__ = [
     "scrape_webpage",
     "search_web",
+    "search_images",
     "map_website",
     "extract_multiple_products",
     "extract_product_data",
@@ -181,6 +183,33 @@ def search_web(query: str, num_results: int = 5) -> list[dict]:
         return search_results
     except Exception as e:
         raise ValueError(f"Search failed for '{query}': {str(e)}")
+
+
+def search_images(query: str, num_results: int = 5) -> list[dict]:
+    """Search for images using Serper.dev API.
+
+    Returns list of dicts with 'imageUrl', 'title', 'source' keys.
+    """
+    api_key = os.getenv("SERPER_API_KEY")
+    if not api_key:
+        logger.warning("SERPER_API_KEY not set, image search unavailable")
+        return []
+
+    try:
+        response = httpx.post(
+            "https://google.serper.dev/images",
+            headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
+            json={"q": query, "num": num_results},
+            timeout=10.0,
+        )
+        response.raise_for_status()
+        data = response.json()
+        images = data.get("images", [])[:num_results]
+        return [{"imageUrl": img.get("imageUrl", ""), "title": img.get("title", ""),
+                 "source": img.get("source", "")} for img in images]
+    except Exception as e:
+        logger.error(f"Image search failed for '{query}': {e}")
+        return []
 
 
 def map_website(url: str, max_pages: int = 100) -> dict:

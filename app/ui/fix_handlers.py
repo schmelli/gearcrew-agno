@@ -1,23 +1,19 @@
-"""Fix handlers for the Data Fixer.
-
-Each handler implements the logic for fixing a specific type of data quality issue.
-"""
+"""Fix handlers for the Data Fixer."""
 
 import streamlit as st
 from typing import Optional
 
 from app.db.memgraph import execute_and_fetch, execute_cypher
+from app.tools.web_scraper import search_images
 
 
 # Standard gear categories
 GEAR_CATEGORIES = [
-    "backpack", "tent", "sleeping_bag", "sleeping_pad", "stove",
-    "water_filter", "headlamp", "jacket", "pants", "boots",
-    "trekking_poles", "cookware", "shelter", "quilt", "bivy",
-    "rain_gear", "base_layer", "mid_layer", "insulation",
-    "gloves", "hat", "socks", "gaiters", "food_storage",
-    "navigation", "first_aid", "repair_kit", "hygiene",
-    "electronics", "accessories", "other"
+    "backpack", "tent", "sleeping_bag", "sleeping_pad", "stove", "water_filter",
+    "headlamp", "jacket", "pants", "boots", "trekking_poles", "cookware", "shelter",
+    "quilt", "bivy", "rain_gear", "base_layer", "mid_layer", "insulation", "gloves",
+    "hat", "socks", "gaiters", "food_storage", "navigation", "first_aid", "repair_kit",
+    "hygiene", "electronics", "accessories", "other"
 ]
 
 
@@ -194,51 +190,79 @@ def fix_assign_brand(item: dict, config: dict) -> bool:
 
 
 def fix_add_image(item: dict, config: dict) -> bool:
-    """Handle adding an image URL to an item."""
-    name = item.get(config["name_field"], "Unknown")
-    brand = item.get("brand", "")
-
+    """Handle adding an image URL to an item with Google image search."""
+    name, brand = item.get(config["name_field"], "Unknown"), item.get("brand", "")
+    idx = st.session_state.fixer_current_index
     st.markdown(f"### {name}")
     if brand:
         st.caption(f"Brand: {brand}")
 
-    image_url = st.text_input(
-        "Image URL:",
-        key=f"image_url_{st.session_state.fixer_current_index}",
-        placeholder="https://example.com/image.jpg",
-    )
+    search_query = f"{brand} {name}".strip() if brand else name
+    images_key, selected_key = f"search_images_{idx}", f"selected_image_{idx}"
 
+    # Auto-search on first load
+    if images_key not in st.session_state:
+        with st.spinner(f"Searching for images..."):
+            st.session_state[images_key] = search_images(search_query, num_results=5)
+
+    images = st.session_state.get(images_key, [])
+    if images:
+        st.write("**Select an image:**")
+        cols = st.columns(5)
+        for i, img in enumerate(images):
+            with cols[i]:
+                st.image(img["imageUrl"], use_container_width=True)
+                src = img.get("source", "")
+                st.caption(src[:20] + "..." if len(src) > 20 else src)
+                if st.button("Select", key=f"select_img_{idx}_{i}"):
+                    st.session_state[selected_key] = img["imageUrl"]
+    else:
+        st.warning("No images found. Enter URL manually below.")
+
+    selected_url = st.session_state.get(selected_key, "")
+    if selected_url:
+        st.success(f"Selected: {selected_url[:60]}...")
+
+    manual_url = st.text_input("Or enter URL manually:", key=f"manual_url_{idx}")
+    image_url = manual_url.strip() if manual_url.strip() else selected_url
+
+    # Re-search option
+    new_query = st.text_input("Search query:", value=search_query, key=f"search_query_{idx}")
+    if st.button("Re-search", key=f"research_{idx}"):
+        with st.spinner("Searching..."):
+            st.session_state[images_key] = search_images(new_query, num_results=5)
+            st.session_state[selected_key] = ""
+        st.rerun()
+
+    st.divider()
     col1, col2, col3 = st.columns(3)
+    def _cleanup():
+        st.session_state.pop(images_key, None)
+        st.session_state.pop(selected_key, None)
 
     with col1:
         if st.button("Apply Fix", type="primary", disabled=not image_url):
-            query = """
-            MATCH (g:GearItem {name: $name})
-            SET g.imageUrl = $url
-            RETURN g.name
-            """
-            if execute_cypher(query, {"name": name, "url": image_url}):
+            q = "MATCH (g:GearItem {name: $name}) SET g.imageUrl = $url RETURN g.name"
+            if execute_cypher(q, {"name": name, "url": image_url}):
+                _cleanup()
                 st.success(f"Added image to {name}")
                 return True
-            else:
-                st.error("Failed to apply fix")
-
+            st.error("Failed to apply fix")
     with col2:
         if st.button("Skip"):
+            _cleanup()
             return "skip"
-
     with col3:
         if st.button("Delete Item", type="secondary"):
-            key = f"confirm_delete_{st.session_state.fixer_current_index}"
+            key = f"confirm_delete_{idx}"
             if st.session_state.get(key):
-                query = "MATCH (g:GearItem {name: $name}) DETACH DELETE g"
-                if execute_cypher(query, {"name": name}):
+                if execute_cypher("MATCH (g:GearItem {name: $name}) DETACH DELETE g", {"name": name}):
+                    _cleanup()
                     st.success(f"Deleted {name}")
                     return True
             else:
                 st.session_state[key] = True
                 st.warning("Click again to confirm deletion")
-
     return False
 
 
