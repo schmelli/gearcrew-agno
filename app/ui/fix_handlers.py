@@ -412,7 +412,7 @@ def fix_set_weight(item: dict, config: dict) -> bool:
     if brand:
         st.caption(f"Brand: {brand}")
 
-    wk, sk = f"weight_sources_{idx}", f"selected_weight_{idx}"
+    wk, wik = f"weight_sources_{idx}", f"weight_input_{idx}"
     if wk not in st.session_state:
         with st.spinner("Searching for weight..."):
             st.session_state[wk] = search_product_weights(name, brand, num_sources=4)
@@ -424,19 +424,23 @@ def fix_set_weight(item: dict, config: dict) -> bool:
             c1, c2 = st.columns([1, 4])
             with c1:
                 if st.button("Select", key=f"sel_wt_{idx}_{i}"):
-                    st.session_state[sk] = src["weight_grams"]
+                    st.session_state[wik] = src["weight_grams"]
+                    st.rerun()
             with c2:
                 st.markdown(f"**{src['weight_grams']}g** ({src['original_text']}) - [{src['source']}]({src['url']})")
     else:
         st.warning("No weight sources found. Enter manually.")
 
-    weight = st.number_input("Weight (grams):", min_value=0, max_value=50000,
-                             value=st.session_state.get(sk, 0), key=f"weight_input_{idx}")
+    # Initialize weight input if not set
+    if wik not in st.session_state:
+        st.session_state[wik] = 0
+    weight = st.number_input("Weight (grams):", min_value=0, max_value=50000, key=wik)
+
     new_q = st.text_input("Search query:", value=f"{brand} {name}".strip(), key=f"wt_query_{idx}")
     if st.button("Re-search", key=f"wt_research_{idx}"):
         with st.spinner("Searching..."):
             st.session_state[wk] = search_product_weights(new_q, "", num_sources=4)
-            st.session_state.pop(sk, None)
+            st.session_state[wik] = 0
         st.rerun()
 
     st.divider()
@@ -446,14 +450,14 @@ def fix_set_weight(item: dict, config: dict) -> bool:
             if execute_cypher("MATCH (g:GearItem {name: $name}) SET g.weight_grams = $wt RETURN g",
                               {"name": name, "wt": weight}):
                 st.session_state.pop(wk, None)
-                st.session_state.pop(sk, None)
+                st.session_state.pop(wik, None)
                 st.success(f"Set weight to {weight}g")
                 return True
             st.error("Failed")
     with c2:
         if st.button("Skip"):
             st.session_state.pop(wk, None)
-            st.session_state.pop(sk, None)
+            st.session_state.pop(wik, None)
             return "skip"
     return False
 
