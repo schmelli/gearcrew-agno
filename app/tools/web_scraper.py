@@ -1,9 +1,4 @@
-"""Web scraping and search tools with Playwright-first, Firecrawl-fallback.
-
-This module provides web scraping functionality for GearCrew.
-Primary: Playwright browser automation (free, local)
-Fallback: Firecrawl API (paid, cloud-based)
-"""
+"""Web scraping and search tools with Playwright-first, Firecrawl-fallback."""
 
 import logging
 import os
@@ -37,6 +32,7 @@ __all__ = [
     "scrape_webpage",
     "search_web",
     "search_images",
+    "search_product_weights",
     "map_website",
     "extract_multiple_products",
     "extract_product_data",
@@ -209,6 +205,83 @@ def search_images(query: str, num_results: int = 5) -> list[dict]:
                  "source": img.get("source", "")} for img in images]
     except Exception as e:
         logger.error(f"Image search failed for '{query}': {e}")
+        return []
+
+
+def _extract_weights_from_text(text: str) -> list[dict]:
+    """Extract weight values from text content."""
+    weights = []
+    # Match patterns like "Weight: 450g", "12.5 oz", "1 lb 2 oz", "450 grams"
+    patterns = [
+        (r'(\d+(?:\.\d+)?)\s*(?:g|grams?)\b', 'g'),
+        (r'(\d+(?:\.\d+)?)\s*(?:oz|ounces?)\b', 'oz'),
+        (r'(\d+(?:\.\d+)?)\s*(?:lb|lbs|pounds?)\b', 'lb'),
+        (r'(\d+)\s*lb[s]?\s*(\d+(?:\.\d+)?)\s*oz', 'lb_oz'),  # "1 lb 2 oz"
+    ]
+    for pattern, unit in patterns:
+        for match in re.finditer(pattern, text, re.IGNORECASE):
+            try:
+                if unit == 'g':
+                    grams = float(match.group(1))
+                elif unit == 'oz':
+                    grams = float(match.group(1)) * 28.3495
+                elif unit == 'lb':
+                    grams = float(match.group(1)) * 453.592
+                elif unit == 'lb_oz':
+                    grams = float(match.group(1)) * 453.592 + float(match.group(2)) * 28.3495
+                else:
+                    continue
+                if 10 < grams < 20000:  # Filter unrealistic weights
+                    weights.append({"grams": round(grams), "original": match.group(0)})
+            except (ValueError, IndexError):
+                continue
+    return weights
+
+
+def search_product_weights(product_name: str, brand: str = "", num_sources: int = 4) -> list[dict]:
+    """Search for product weight from multiple online sources."""
+    api_key = os.getenv("SERPER_API_KEY")
+    if not api_key:
+        return []
+
+    query = f"{brand} {product_name} weight specs".strip() if brand else f"{product_name} weight specs"
+    results = []
+    try:
+        resp = httpx.post("https://google.serper.dev/search",
+                          headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
+                          json={"q": query, "num": num_sources * 2}, timeout=10.0)
+        resp.raise_for_status()
+        organic = resp.json().get("organic", [])
+
+        for item in organic[:num_sources * 2]:
+            url, snippet = item.get("link", ""), item.get("snippet", "")
+            weights = _extract_weights_from_text(snippet)
+            if weights:
+                results.append({"source": urlparse(url).netloc.replace("www.", ""), "url": url,
+                                "title": item.get("title", ""), "weight_grams": weights[0]["grams"],
+                                "original_text": weights[0]["original"], "snippet": snippet[:200]})
+                if len(results) >= num_sources:
+                    break
+
+        # If not enough, try scraping pages
+        if len(results) < 2:
+            for item in organic[:4]:
+                if len(results) >= num_sources:
+                    break
+                url = item.get("link", "")
+                if any(r["url"] == url for r in results):
+                    continue
+                try:
+                    weights = _extract_weights_from_text(scrape_webpage(url)[:5000])
+                    if weights:
+                        results.append({"source": urlparse(url).netloc.replace("www.", ""), "url": url,
+                                        "title": item.get("title", ""), "weight_grams": weights[0]["grams"],
+                                        "original_text": weights[0]["original"], "snippet": item.get("snippet", "")[:200]})
+                except Exception:
+                    continue
+        return results[:num_sources]
+    except Exception as e:
+        logger.error(f"Weight search failed: {e}")
         return []
 
 

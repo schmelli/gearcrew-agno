@@ -4,7 +4,7 @@ import streamlit as st
 from typing import Optional
 
 from app.db.memgraph import execute_and_fetch, execute_cypher
-from app.tools.web_scraper import search_images
+from app.tools.web_scraper import search_images, search_product_weights
 
 
 # Standard gear categories
@@ -268,114 +268,64 @@ def fix_add_image(item: dict, config: dict) -> bool:
 
 def fix_link_to_gear(item: dict, config: dict) -> bool:
     """Handle linking a node to gear items (for product families, insights)."""
-    name = item.get(config["name_field"], "Unknown")
-    node_label = config["node_label"]
-    brand = item.get("brand", "")
-
+    name, node_label = item.get(config["name_field"], "Unknown"), config["node_label"]
+    idx = st.session_state.fixer_current_index
     st.markdown(f"### {name}")
-    if brand:
-        st.caption(f"Brand: {brand}")
+    if item.get("brand"):
+        st.caption(f"Brand: {item['brand']}")
 
     selected_brand = None
     if node_label == "ProductFamily":
         inferred = infer_brand_from_name(name)
-        if inferred:
-            st.info(f"Suggested brand: **{inferred}**")
-
         brands = get_all_brands()
-        selected_brand = st.selectbox(
-            "Assign brand:",
-            ["-- No change --"] + ([inferred] if inferred else []) + brands,
-            key=f"pf_brand_{st.session_state.fixer_current_index}",
-        )
+        opts = ["-- No change --"] + ([inferred] if inferred and inferred not in brands else []) + brands
+        def_idx = opts.index(inferred) if inferred and inferred in opts else 0
+        selected_brand = st.selectbox("Assign brand:", opts, index=def_idx, key=f"pf_brand_{idx}")
 
-    search = st.text_input(
-        "Search gear items to link:",
-        value=name.split()[0] if name else "",
-        key=f"gear_search_{st.session_state.fixer_current_index}",
-    )
-
+    search = st.text_input("Search gear items:", value=name.split()[0] if name else "", key=f"gear_search_{idx}")
     selected_items = []
     if search:
         matches = search_gear_items(search)
         if matches:
-            st.write(f"Found {len(matches)} matching gear items:")
-            for i, match in enumerate(matches):
-                if st.checkbox(
-                    f"{match['name']} ({match.get('brand', 'No brand')})",
-                    key=f"link_gear_{st.session_state.fixer_current_index}_{i}",
-                ):
-                    selected_items.append(match)
+            for i, m in enumerate(matches):
+                if st.checkbox(f"{m['name']} ({m.get('brand', 'No brand')})", key=f"link_gear_{idx}_{i}"):
+                    selected_items.append(m)
         else:
-            st.info("No matching gear items found")
+            st.info("No matching gear items")
 
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        can_apply = bool(selected_items) or (
-            node_label == "ProductFamily" and
-            selected_brand and selected_brand != "-- No change --"
-        )
+    c1, c2, c3 = st.columns(3)
+    can_apply = bool(selected_items) or (node_label == "ProductFamily" and selected_brand and selected_brand != "-- No change --")
+    with c1:
         if st.button("Apply Fix", type="primary", disabled=not can_apply):
-            success = True
-
-            for gear in selected_items:
-                if node_label == "ProductFamily":
-                    query = """
-                    MATCH (pf:ProductFamily {name: $pf_name})
-                    MATCH (g:GearItem {name: $gear_name})
-                    MERGE (pf)-[:HAS_VARIANT]->(g)
-                    RETURN pf.name
-                    """
-                elif node_label == "Insight":
-                    query = """
-                    MATCH (i:Insight {summary: $pf_name})
-                    MATCH (g:GearItem {name: $gear_name})
-                    MERGE (g)-[:HAS_TIP]->(i)
-                    RETURN i.summary
-                    """
-                else:
-                    continue
-
-                if not execute_cypher(query, {"pf_name": name, "gear_name": gear["name"]}):
-                    success = False
-
+            ok = True
+            for g in selected_items:
+                q = ("MATCH (pf:ProductFamily {name: $pf}) MATCH (g:GearItem {name: $g}) MERGE (pf)-[:HAS_VARIANT]->(g)"
+                     if node_label == "ProductFamily" else
+                     "MATCH (i:Insight {summary: $pf}) MATCH (g:GearItem {name: $g}) MERGE (g)-[:HAS_TIP]->(i)")
+                if not execute_cypher(q, {"pf": name, "g": g["name"]}):
+                    ok = False
             if node_label == "ProductFamily" and selected_brand and selected_brand != "-- No change --":
-                query = """
-                MATCH (pf:ProductFamily {name: $name})
-                MERGE (b:OutdoorBrand {name: $brand})
-                MERGE (pf)-[:PRODUCED_BY]->(b)
-                SET pf.brand = $brand
-                RETURN pf.name
-                """
-                if not execute_cypher(query, {"name": name, "brand": selected_brand}):
-                    success = False
-
-            if success:
+                q = "MATCH (pf:ProductFamily {name: $n}) MERGE (b:OutdoorBrand {name: $b}) MERGE (pf)-[:PRODUCED_BY]->(b) SET pf.brand = $b"
+                if not execute_cypher(q, {"n": name, "b": selected_brand}):
+                    ok = False
+            if ok:
                 st.success(f"Fixed {name}")
                 return True
-            else:
-                st.error("Some fixes failed")
-
-    with col2:
+            st.error("Some fixes failed")
+    with c2:
         if st.button("Skip"):
             return "skip"
-
-    with col3:
+    with c3:
         if st.button("Delete", type="secondary"):
-            key = f"confirm_delete_{st.session_state.fixer_current_index}"
-            if st.session_state.get(key):
-                if node_label == "Insight":
-                    query = "MATCH (n:Insight {summary: $name}) DETACH DELETE n"
-                else:
-                    query = f"MATCH (n:{node_label} {{name: $name}}) DETACH DELETE n"
-                if execute_cypher(query, {"name": name}):
+            dk = f"confirm_delete_{idx}"
+            if st.session_state.get(dk):
+                q = f"MATCH (n:Insight {{summary: $name}}) DETACH DELETE n" if node_label == "Insight" else f"MATCH (n:{node_label} {{name: $name}}) DETACH DELETE n"
+                if execute_cypher(q, {"name": name}):
                     st.success(f"Deleted {name}")
                     return True
             else:
-                st.session_state[key] = True
-                st.warning("Click again to confirm deletion")
-
+                st.session_state[dk] = True
+                st.warning("Click again to confirm")
     return False
 
 
@@ -455,23 +405,55 @@ def fix_set_category(item: dict, config: dict) -> bool:
 
 
 def fix_set_weight(item: dict, config: dict) -> bool:
-    """Handle setting weight for an item."""
+    """Handle setting weight for an item with online weight search."""
     name, brand = item.get(config["name_field"], "Unknown"), item.get("brand", "")
+    idx = st.session_state.fixer_current_index
     st.markdown(f"### {name}")
     if brand:
         st.caption(f"Brand: {brand}")
-    weight = st.number_input("Weight (grams):", min_value=0, max_value=50000, value=0,
-                             key=f"weight_{st.session_state.fixer_current_index}")
-    col1, col2 = st.columns(2)
-    with col1:
+
+    wk, sk = f"weight_sources_{idx}", f"selected_weight_{idx}"
+    if wk not in st.session_state:
+        with st.spinner("Searching for weight..."):
+            st.session_state[wk] = search_product_weights(name, brand, num_sources=4)
+
+    sources = st.session_state.get(wk, [])
+    if sources:
+        st.write("**Weight sources found:**")
+        for i, src in enumerate(sources):
+            c1, c2 = st.columns([1, 4])
+            with c1:
+                if st.button("Select", key=f"sel_wt_{idx}_{i}"):
+                    st.session_state[sk] = src["weight_grams"]
+            with c2:
+                st.markdown(f"**{src['weight_grams']}g** ({src['original_text']}) - [{src['source']}]({src['url']})")
+    else:
+        st.warning("No weight sources found. Enter manually.")
+
+    weight = st.number_input("Weight (grams):", min_value=0, max_value=50000,
+                             value=st.session_state.get(sk, 0), key=f"weight_input_{idx}")
+    new_q = st.text_input("Search query:", value=f"{brand} {name}".strip(), key=f"wt_query_{idx}")
+    if st.button("Re-search", key=f"wt_research_{idx}"):
+        with st.spinner("Searching..."):
+            st.session_state[wk] = search_product_weights(new_q, "", num_sources=4)
+            st.session_state.pop(sk, None)
+        st.rerun()
+
+    st.divider()
+    c1, c2 = st.columns(2)
+    with c1:
         if st.button("Apply Fix", type="primary", disabled=weight == 0):
-            q = "MATCH (g:GearItem {name: $name}) SET g.weight_grams = $weight RETURN g.name"
-            if execute_cypher(q, {"name": name, "weight": weight}):
-                st.success(f"Set weight of {name} to {weight}g")
+            if execute_cypher("MATCH (g:GearItem {name: $name}) SET g.weight_grams = $wt RETURN g",
+                              {"name": name, "wt": weight}):
+                st.session_state.pop(wk, None)
+                st.session_state.pop(sk, None)
+                st.success(f"Set weight to {weight}g")
                 return True
-            st.error("Failed to apply fix")
-    with col2:
+            st.error("Failed")
+    with c2:
         if st.button("Skip"):
+            st.session_state.pop(wk, None)
+            st.session_state.pop(sk, None)
             return "skip"
     return False
 
