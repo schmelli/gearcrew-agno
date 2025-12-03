@@ -82,6 +82,19 @@ def infer_brand_from_name(name: str) -> Optional[str]:
     return None
 
 
+def strip_brand_from_name(name: str, brand: str) -> str:
+    """Remove brand name from product name (e.g., 'Gregory Maya 20' -> 'Maya 20')."""
+    if not brand or not name:
+        return name
+    name_lower, brand_lower = name.lower(), brand.lower()
+    # Check brand and common variations (Arc'teryx vs Arcteryx, Therm-a-Rest vs Thermarest)
+    for variant in [brand_lower, brand_lower.replace("'", ""), brand_lower.replace("-", " ")]:
+        if name_lower.startswith(variant):
+            stripped = name[len(variant):].lstrip()
+            return stripped if stripped else name
+    return name
+
+
 def fix_assign_brand(item: dict, config: dict) -> bool:
     """Handle assigning a brand to an item."""
     name = item.get(config["name_field"], "Unknown")
@@ -93,22 +106,32 @@ def fix_assign_brand(item: dict, config: dict) -> bool:
 
     # Try to infer brand
     inferred = infer_brand_from_name(name)
-    if inferred:
-        st.info(f"Suggested brand: **{inferred}**")
 
     # Brand selection
     brands = get_all_brands()
+
+    # Build options list and find default index
+    if inferred and inferred not in brands:
+        options = [inferred] + brands
+    else:
+        options = brands
+
+    # Calculate default index: if inferred brand exists, pre-select it
+    default_index = 0  # "-- Select --"
+    if inferred:
+        try:
+            default_index = options.index(inferred) + 1  # +1 for "-- Select --"
+        except ValueError:
+            default_index = 1 if inferred in options else 0
+
     col1, col2 = st.columns([3, 1])
 
     with col1:
-        if inferred and inferred not in brands:
-            brands = [inferred] + brands
-
         selected_brand = st.selectbox(
             "Select brand:",
-            ["-- Select --"] + brands,
+            ["-- Select --"] + options,
             key=f"brand_select_{st.session_state.fixer_current_index}",
-            index=1 if inferred and inferred in brands else 0,
+            index=default_index,
         )
 
     with col2:
@@ -121,19 +144,32 @@ def fix_assign_brand(item: dict, config: dict) -> bool:
         selected_brand if selected_brand != "-- Select --" else None
     )
 
+    # Show preview of cleaned product name
+    if brand_to_use:
+        cleaned_name = strip_brand_from_name(name, brand_to_use)
+        if cleaned_name != name:
+            st.info(f"Product name will be updated: **{name}** → **{cleaned_name}**")
+
     col1, col2, col3 = st.columns(3)
 
     with col1:
         if st.button("Apply Fix", type="primary", disabled=not brand_to_use):
+            # Clean the product name by removing brand prefix
+            cleaned_name = strip_brand_from_name(name, brand_to_use)
+
             query = """
-            MATCH (g:GearItem {name: $name})
+            MATCH (g:GearItem {name: $old_name})
             MERGE (b:OutdoorBrand {name: $brand})
             MERGE (b)-[:MANUFACTURES_ITEM]->(g)
-            SET g.brand = $brand
+            SET g.brand = $brand, g.name = $new_name
             RETURN g.name
             """
-            if execute_cypher(query, {"name": name, "brand": brand_to_use}):
-                st.success(f"Linked {name} to {brand_to_use}")
+            params = {"old_name": name, "brand": brand_to_use, "new_name": cleaned_name}
+            if execute_cypher(query, params):
+                if cleaned_name != name:
+                    st.success(f"Linked '{cleaned_name}' to {brand_to_use}")
+                else:
+                    st.success(f"Linked {name} to {brand_to_use}")
                 return True
             else:
                 st.error("Failed to apply fix")
@@ -396,78 +432,43 @@ def fix_set_category(item: dict, config: dict) -> bool:
 
 def fix_set_weight(item: dict, config: dict) -> bool:
     """Handle setting weight for an item."""
-    name = item.get(config["name_field"], "Unknown")
-    brand = item.get("brand", "")
-
+    name, brand = item.get(config["name_field"], "Unknown"), item.get("brand", "")
     st.markdown(f"### {name}")
     if brand:
         st.caption(f"Brand: {brand}")
-
-    weight = st.number_input(
-        "Weight (grams):",
-        min_value=0,
-        max_value=50000,
-        value=0,
-        key=f"weight_{st.session_state.fixer_current_index}",
-    )
-
+    weight = st.number_input("Weight (grams):", min_value=0, max_value=50000, value=0,
+                             key=f"weight_{st.session_state.fixer_current_index}")
     col1, col2 = st.columns(2)
-
     with col1:
         if st.button("Apply Fix", type="primary", disabled=weight == 0):
-            query = """
-            MATCH (g:GearItem {name: $name})
-            SET g.weight_grams = $weight
-            RETURN g.name
-            """
-            if execute_cypher(query, {"name": name, "weight": weight}):
+            q = "MATCH (g:GearItem {name: $name}) SET g.weight_grams = $weight RETURN g.name"
+            if execute_cypher(q, {"name": name, "weight": weight}):
                 st.success(f"Set weight of {name} to {weight}g")
                 return True
-            else:
-                st.error("Failed to apply fix")
-
+            st.error("Failed to apply fix")
     with col2:
         if st.button("Skip"):
             return "skip"
-
     return False
 
 
 def fix_set_price(item: dict, config: dict) -> bool:
     """Handle setting price for an item."""
-    name = item.get(config["name_field"], "Unknown")
-    brand = item.get("brand", "")
-
+    name, brand = item.get(config["name_field"], "Unknown"), item.get("brand", "")
     st.markdown(f"### {name}")
     if brand:
         st.caption(f"Brand: {brand}")
-
-    price = st.number_input(
-        "Price (USD):",
-        min_value=0.0,
-        max_value=10000.0,
-        value=0.0,
-        step=0.01,
-        key=f"price_{st.session_state.fixer_current_index}",
-    )
-
+    price = st.number_input("Price (USD):", min_value=0.0, max_value=10000.0, value=0.0,
+                            step=0.01, key=f"price_{st.session_state.fixer_current_index}")
     col1, col2 = st.columns(2)
-
     with col1:
         if st.button("Apply Fix", type="primary", disabled=price == 0):
-            query = """
-            MATCH (g:GearItem {name: $name})
-            SET g.price_usd = $price
-            RETURN g.name
-            """
-            if execute_cypher(query, {"name": name, "price": price}):
+            q = "MATCH (g:GearItem {name: $name}) SET g.price_usd = $price RETURN g.name"
+            if execute_cypher(q, {"name": name, "price": price}):
                 st.success(f"Set price of {name} to ${price:.2f}")
                 return True
-            else:
-                st.error("Failed to apply fix")
-
+            st.error("Failed to apply fix")
     with col2:
         if st.button("Skip"):
             return "skip"
-
     return False
