@@ -198,71 +198,75 @@ def fix_add_image(item: dict, config: dict) -> bool:
         st.caption(f"Brand: {brand}")
 
     search_query = f"{brand} {name}".strip() if brand else name
-    images_key, selected_key = f"search_images_{idx}", f"selected_image_{idx}"
+    ik, mk = f"search_images_{idx}", f"manual_url_{idx}"
 
-    # Auto-search on first load
-    if images_key not in st.session_state:
-        with st.spinner(f"Searching for images..."):
-            st.session_state[images_key] = search_images(search_query, num_results=5)
+    if ik not in st.session_state:
+        with st.spinner("Searching for images..."):
+            st.session_state[ik] = search_images(search_query, num_results=5)
 
-    images = st.session_state.get(images_key, [])
+    def _cleanup():
+        st.session_state.pop(ik, None)
+        st.session_state.pop(mk, None)
+
+    images = st.session_state.get(ik, [])
     if images:
-        st.write("**Select an image:**")
+        st.write("**Click an image to apply:**")
         cols = st.columns(5)
         for i, img in enumerate(images):
             with cols[i]:
                 st.image(img["imageUrl"], use_container_width=True)
                 src = img.get("source", "")
                 st.caption(src[:20] + "..." if len(src) > 20 else src)
-                if st.button("Select", key=f"select_img_{idx}_{i}"):
-                    st.session_state[selected_key] = img["imageUrl"]
+                if st.button("Apply", key=f"select_img_{idx}_{i}", type="primary"):
+                    url = img["imageUrl"]
+                    if execute_cypher("MATCH (g:GearItem {name: $name}) SET g.imageUrl = $url RETURN g",
+                                      {"name": name, "url": url}):
+                        _cleanup()
+                        st.success(f"Added image to {name}")
+                        return True
+                    st.error("Failed")
     else:
         st.warning("No images found. Enter URL manually below.")
 
-    selected_url = st.session_state.get(selected_key, "")
-    if selected_url:
-        st.success(f"Selected: {selected_url[:60]}...")
-
-    manual_url = st.text_input("Or enter URL manually:", key=f"manual_url_{idx}")
-    image_url = manual_url.strip() if manual_url.strip() else selected_url
-
-    # Re-search option
-    new_query = st.text_input("Search query:", value=search_query, key=f"search_query_{idx}")
-    if st.button("Re-search", key=f"research_{idx}"):
-        with st.spinner("Searching..."):
-            st.session_state[images_key] = search_images(new_query, num_results=5)
-            st.session_state[selected_key] = ""
-        st.rerun()
-
+    # Manual entry section
     st.divider()
-    col1, col2, col3 = st.columns(3)
-    def _cleanup():
-        st.session_state.pop(images_key, None)
-        st.session_state.pop(selected_key, None)
+    st.write("**Or enter manually:**")
+    manual_url = st.text_input("Image URL:", key=mk, label_visibility="collapsed")
 
-    with col1:
-        if st.button("Apply Fix", type="primary", disabled=not image_url):
-            q = "MATCH (g:GearItem {name: $name}) SET g.imageUrl = $url RETURN g.name"
-            if execute_cypher(q, {"name": name, "url": image_url}):
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        if st.button("Apply URL", type="primary", disabled=not manual_url.strip()):
+            if execute_cypher("MATCH (g:GearItem {name: $name}) SET g.imageUrl = $url RETURN g",
+                              {"name": name, "url": manual_url.strip()}):
                 _cleanup()
                 st.success(f"Added image to {name}")
                 return True
-            st.error("Failed to apply fix")
-    with col2:
+            st.error("Failed")
+    with c2:
+        new_q = st.text_input("Search:", value=search_query, key=f"search_query_{idx}", label_visibility="collapsed")
+    with c3:
+        if st.button("Re-search", key=f"research_{idx}"):
+            with st.spinner("Searching..."):
+                st.session_state[ik] = search_images(new_q, num_results=5)
+            st.rerun()
+
+    st.divider()
+    c1, c2 = st.columns(2)
+    with c1:
         if st.button("Skip"):
             _cleanup()
             return "skip"
-    with col3:
+    with c2:
         if st.button("Delete Item", type="secondary"):
-            key = f"confirm_delete_{idx}"
-            if st.session_state.get(key):
+            dk = f"confirm_delete_{idx}"
+            if st.session_state.get(dk):
                 if execute_cypher("MATCH (g:GearItem {name: $name}) DETACH DELETE g", {"name": name}):
                     _cleanup()
                     st.success(f"Deleted {name}")
                     return True
             else:
-                st.session_state[key] = True
-                st.warning("Click again to confirm deletion")
+                st.session_state[dk] = True
+                st.warning("Click again to confirm")
     return False
 
 
