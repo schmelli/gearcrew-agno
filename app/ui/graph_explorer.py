@@ -12,6 +12,12 @@ from app.db.memgraph import (
     get_graph_stats,
 )
 from app.ui.graph_queries import PRESET_CATEGORIES, PRESET_QUERIES
+from app.ui.data_fixer import (
+    is_query_fixable,
+    render_fix_button,
+    render_data_fixer,
+    init_fixer_state,
+)
 
 
 def node_to_dict(node) -> dict:
@@ -388,6 +394,13 @@ def render_data_health_tab():
 
 def render_query_tab():
     """Render the custom query tab."""
+    init_fixer_state()
+
+    # Check if we're in fixer mode
+    if st.session_state.get("fixer_items"):
+        render_data_fixer()
+        return
+
     st.subheader("Custom Cypher Query")
 
     st.warning("Only read-only queries (MATCH, RETURN) are allowed.")
@@ -397,6 +410,10 @@ def render_query_tab():
     # Get the query key from the selected preset and look up the query
     query_key = PRESET_CATEGORIES.get(preset)
     query = PRESET_QUERIES.get(query_key, "") if query_key else ""
+
+    # Show if this query is fixable
+    if query_key and is_query_fixable(query_key):
+        st.info("This query has a 'Fix These' action available after running.")
 
     query = st.text_area(
         "Cypher Query:",
@@ -409,27 +426,43 @@ def render_query_tab():
         if query.strip():
             results = execute_custom_query(query)
 
+            # Store results and query key for potential fixing
+            st.session_state.last_query_results = results
+            st.session_state.last_query_key = query_key
+
             if results:
                 st.success(f"Found {len(results)} results")
-                try:
-                    flat_results = []
-                    for row in results:
-                        flat_row = {}
-                        for k, v in row.items():
-                            if hasattr(v, "__iter__") and not isinstance(v, (str, dict)):
-                                flat_row[k] = str(v)
-                            elif isinstance(v, dict):
-                                flat_row[k] = str(dict(v))
-                            else:
-                                flat_row[k] = v
-                        flat_results.append(flat_row)
-                    df = pd.DataFrame(flat_results)
-                    st.dataframe(df, width="stretch")
-                except Exception:
-                    for row in results:
-                        st.json(dict(row) if hasattr(row, "items") else str(row))
             else:
                 st.info("Query returned no results")
+
+    # Display stored results
+    results = st.session_state.get("last_query_results", [])
+    stored_query_key = st.session_state.get("last_query_key")
+
+    if results:
+        # Show Fix button if applicable
+        if stored_query_key and is_query_fixable(stored_query_key):
+            if render_fix_button(stored_query_key, results):
+                st.rerun()
+
+        # Display results as table
+        try:
+            flat_results = []
+            for row in results:
+                flat_row = {}
+                for k, v in row.items():
+                    if hasattr(v, "__iter__") and not isinstance(v, (str, dict)):
+                        flat_row[k] = str(v)
+                    elif isinstance(v, dict):
+                        flat_row[k] = str(dict(v))
+                    else:
+                        flat_row[k] = v
+                flat_results.append(flat_row)
+            df = pd.DataFrame(flat_results)
+            st.dataframe(df, use_container_width=True)
+        except Exception:
+            for row in results:
+                st.json(dict(row) if hasattr(row, "items") else str(row))
 
 
 def render_graph_explorer():
