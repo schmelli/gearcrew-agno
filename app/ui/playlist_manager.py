@@ -8,12 +8,50 @@ Allows users to:
 - View processed videos with their extraction results
 """
 
+import json
+import os
 import streamlit as st
 from typing import Optional
 
 from app.tools.youtube import get_playlist_videos, get_playlist_info
 from app.db.memgraph import check_source_exists, get_gear_from_source
 from app.agent import extract_gear_with_context
+
+# Settings file for persisting user preferences
+SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "..", "..", ".gearcrew_settings.json")
+
+
+def load_settings() -> dict:
+    """Load settings from file."""
+    try:
+        if os.path.exists(SETTINGS_FILE):
+            with open(SETTINGS_FILE, "r") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+
+def save_settings(settings: dict):
+    """Save settings to file."""
+    try:
+        with open(SETTINGS_FILE, "w") as f:
+            json.dump(settings, f, indent=2)
+    except Exception:
+        pass
+
+
+def get_last_playlist_url() -> str:
+    """Get the last used playlist URL."""
+    settings = load_settings()
+    return settings.get("last_playlist_url", "")
+
+
+def save_last_playlist_url(url: str):
+    """Save the last used playlist URL."""
+    settings = load_settings()
+    settings["last_playlist_url"] = url
+    save_settings(settings)
 
 
 def get_youtube_thumbnail(video_id: str) -> str:
@@ -274,11 +312,15 @@ def render_playlist_manager():
     st.header("Playlist Manager")
     st.caption("Load a YouTube playlist and process videos one by one")
 
+    # Load last used playlist URL as default
+    default_url = get_last_playlist_url()
+
     # Playlist URL input
     col1, col2 = st.columns([4, 1])
     with col1:
         playlist_url = st.text_input(
             "YouTube Playlist URL",
+            value=default_url,
             placeholder="https://www.youtube.com/playlist?list=...",
             key="playlist_url_input",
         )
@@ -287,7 +329,9 @@ def render_playlist_manager():
         load_clicked = st.button("Load Playlist", type="primary")
 
     if load_clicked and playlist_url:
-        load_playlist(playlist_url)
+        if load_playlist(playlist_url):
+            # Save the URL for next time
+            save_last_playlist_url(playlist_url)
 
     # Check if we need to process a video
     if st.session_state.processing_video_id:

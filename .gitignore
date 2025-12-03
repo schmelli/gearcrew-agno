@@ -34,3 +34,6 @@ uv.lock
 
 # Prompts materialized directory
 prompts/.materialized/
+
+# User settings (local preferences)
+.gearcrew_settings.json
