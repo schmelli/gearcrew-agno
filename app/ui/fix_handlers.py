@@ -417,48 +417,58 @@ def fix_set_weight(item: dict, config: dict) -> bool:
         with st.spinner("Searching for weight..."):
             st.session_state[wk] = search_product_weights(name, brand, num_sources=4)
 
+    def _cleanup():
+        st.session_state.pop(wk, None)
+        st.session_state.pop(wik, None)
+
     sources = st.session_state.get(wk, [])
     if sources:
-        st.write("**Weight sources found:**")
+        st.write("**Select a weight to apply:**")
         for i, src in enumerate(sources):
             c1, c2 = st.columns([1, 4])
             with c1:
-                if st.button("Select", key=f"sel_wt_{idx}_{i}"):
-                    st.session_state[wik] = src["weight_grams"]
-                    st.rerun()
+                if st.button("Apply", key=f"sel_wt_{idx}_{i}", type="primary"):
+                    wt = src["weight_grams"]
+                    if execute_cypher("MATCH (g:GearItem {name: $name}) SET g.weight_grams = $wt RETURN g",
+                                      {"name": name, "wt": wt}):
+                        _cleanup()
+                        st.success(f"Set weight to {wt}g")
+                        return True
+                    st.error("Failed")
             with c2:
                 st.markdown(f"**{src['weight_grams']}g** ({src['original_text']}) - [{src['source']}]({src['url']})")
     else:
-        st.warning("No weight sources found. Enter manually.")
+        st.warning("No weight sources found. Enter manually below.")
 
-    # Initialize weight input if not set
+    # Manual entry section
+    st.divider()
+    st.write("**Or enter manually:**")
     if wik not in st.session_state:
         st.session_state[wik] = 0
     weight = st.number_input("Weight (grams):", min_value=0, max_value=50000, key=wik)
 
-    new_q = st.text_input("Search query:", value=f"{brand} {name}".strip(), key=f"wt_query_{idx}")
-    if st.button("Re-search", key=f"wt_research_{idx}"):
-        with st.spinner("Searching..."):
-            st.session_state[wk] = search_product_weights(new_q, "", num_sources=4)
-            st.session_state[wik] = 0
-        st.rerun()
-
-    st.divider()
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
     with c1:
-        if st.button("Apply Fix", type="primary", disabled=weight == 0):
+        if st.button("Apply Manual", type="primary", disabled=weight == 0):
             if execute_cypher("MATCH (g:GearItem {name: $name}) SET g.weight_grams = $wt RETURN g",
                               {"name": name, "wt": weight}):
-                st.session_state.pop(wk, None)
-                st.session_state.pop(wik, None)
+                _cleanup()
                 st.success(f"Set weight to {weight}g")
                 return True
             st.error("Failed")
     with c2:
-        if st.button("Skip"):
-            st.session_state.pop(wk, None)
-            st.session_state.pop(wik, None)
-            return "skip"
+        new_q = st.text_input("Search:", value=f"{brand} {name}".strip(), key=f"wt_query_{idx}", label_visibility="collapsed")
+    with c3:
+        if st.button("Re-search", key=f"wt_research_{idx}"):
+            with st.spinner("Searching..."):
+                st.session_state[wk] = search_product_weights(new_q, "", num_sources=4)
+                st.session_state[wik] = 0
+            st.rerun()
+
+    st.divider()
+    if st.button("Skip"):
+        _cleanup()
+        return "skip"
     return False
 
 
