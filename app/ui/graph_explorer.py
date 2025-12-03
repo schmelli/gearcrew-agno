@@ -11,6 +11,7 @@ from app.db.memgraph import (
     execute_and_fetch,
     get_graph_stats,
 )
+from app.ui.graph_queries import PRESET_CATEGORIES, PRESET_QUERIES
 
 
 def node_to_dict(node) -> dict:
@@ -391,45 +392,11 @@ def render_query_tab():
 
     st.warning("Only read-only queries (MATCH, RETURN) are allowed.")
 
-    preset = st.selectbox(
-        "Preset queries:",
-        [
-            "-- Select a preset --",
-            "Get all brands with product counts",
-            "Find items missing weight data",
-            "Find items with images",
-            "Get all insights for a product",
-        ],
-    )
+    preset = st.selectbox("Preset queries:", list(PRESET_CATEGORIES.keys()))
 
-    preset_queries = {
-        "Get all brands with product counts": """
-MATCH (b:OutdoorBrand)
-OPTIONAL MATCH (b)-[:MANUFACTURES_ITEM]->(p)
-RETURN b.name as brand, count(p) as products
-ORDER BY products DESC
-LIMIT 20
-""",
-        "Find items missing weight data": """
-MATCH (g:GearItem)
-WHERE g.weight_grams IS NULL
-RETURN g.name as name, g.brand as brand
-LIMIT 20
-""",
-        "Find items with images": """
-MATCH (g:GearItem)
-WHERE g.imageUrl IS NOT NULL
-RETURN g.name as name, g.brand as brand, g.imageUrl as image
-LIMIT 20
-""",
-        "Get all insights for a product": """
-MATCH (p)-[:HAS_TIP]->(i:Insight)
-RETURN p.name as product, i.summary as insight, i.content as detail
-LIMIT 30
-""",
-    }
-
-    query = preset_queries.get(preset, "") if preset != "-- Select a preset --" else ""
+    # Get the query key from the selected preset and look up the query
+    query_key = PRESET_CATEGORIES.get(preset)
+    query = PRESET_QUERIES.get(query_key, "") if query_key else ""
 
     query = st.text_area(
         "Cypher Query:",
