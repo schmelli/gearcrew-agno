@@ -10,6 +10,7 @@ from typing import Any, Optional
 
 from dotenv import load_dotenv
 from gqlalchemy import Memgraph
+from rapidfuzz import fuzz, process
 
 load_dotenv()
 
@@ -580,86 +581,202 @@ def get_gear_from_source(source_url: str) -> list[dict]:
     return execute_and_fetch(query, {"url": source_url})
 
 
-def find_potential_duplicates(name: str, brand: Optional[str] = None) -> list[dict]:
+def _normalize_product_name(name: str) -> str:
+    """Normalize a product name for comparison.
+
+    Removes common variations, extra spaces, and standardizes format.
+    """
+    if not name:
+        return ""
+
+    # Lowercase
+    normalized = name.lower().strip()
+
+    # Remove common suffixes/prefixes that vary
+    remove_words = [
+        "backpack", "pack", "tent", "bag", "sleeping", "pad", "mat",
+        "ultralight", "lightweight", "ul", "lite", "light",
+        "2p", "1p", "3p", "4p",  # Keep these actually, they're meaningful
+    ]
+
+    # Replace common OCR/transcription errors
+    replacements = {
+        "'": "",  # Arc'o -> Arco
+        "'": "",
+        "´": "",
+        "`": "",
+        "-": " ",  # X-Mid -> X Mid
+        "_": " ",
+    }
+
+    for old, new in replacements.items():
+        normalized = normalized.replace(old, new)
+
+    # Collapse multiple spaces
+    normalized = " ".join(normalized.split())
+
+    return normalized
+
+
+def _calculate_similarity(name1: str, name2: str, brand1: str = None, brand2: str = None) -> dict:
+    """Calculate similarity between two product names.
+
+    Returns dict with various similarity scores.
+    """
+    norm1 = _normalize_product_name(name1)
+    norm2 = _normalize_product_name(name2)
+
+    # Basic fuzzy ratio
+    ratio = fuzz.ratio(norm1, norm2)
+
+    # Partial ratio (handles substring matches)
+    partial = fuzz.partial_ratio(norm1, norm2)
+
+    # Token sort ratio (handles word order differences)
+    token_sort = fuzz.token_sort_ratio(norm1, norm2)
+
+    # Token set ratio (handles extra words)
+    token_set = fuzz.token_set_ratio(norm1, norm2)
+
+    # Brand match bonus
+    brand_bonus = 0
+    if brand1 and brand2:
+        brand_sim = fuzz.ratio(brand1.lower(), brand2.lower())
+        if brand_sim > 80:
+            brand_bonus = 15
+
+    # Calculate overall score (weighted)
+    overall = (
+        ratio * 0.2 +
+        partial * 0.3 +
+        token_sort * 0.25 +
+        token_set * 0.25 +
+        brand_bonus
+    )
+
+    return {
+        "ratio": ratio,
+        "partial": partial,
+        "token_sort": token_sort,
+        "token_set": token_set,
+        "brand_bonus": brand_bonus,
+        "overall": min(100, overall),  # Cap at 100
+    }
+
+
+def find_potential_duplicates(
+    name: str,
+    brand: Optional[str] = None,
+    threshold: int = 65,
+) -> list[dict]:
     """Find potential duplicate gear items using fuzzy matching.
 
-    Searches for items with similar names, considering:
+    Uses multiple fuzzy matching algorithms to find similar products:
     - Exact matches (case-insensitive)
-    - Substring matches (name contains search or vice versa)
-    - Same brand with similar product names
-    - Items in ProductFamily relationships
+    - Substring matches
+    - Fuzzy matches (handles typos, transcription errors)
+    - Same brand products with similar names
 
     Args:
         name: Product name to search for
         brand: Optional brand name for more targeted search
+        threshold: Minimum similarity score (0-100) to include in results
 
     Returns:
-        List of potential matches with similarity info
+        List of potential matches with similarity scores
     """
-    # Extract key terms from the name (remove common words)
-    name_lower = name.lower()
-    stop_words = {"the", "a", "an", "and", "or", "for", "with", "ultralight", "lightweight"}
-    name_terms = [w for w in name_lower.split() if w not in stop_words and len(w) > 2]
-
     results = []
+    seen_items = set()  # Track (name, brand) to avoid duplicates
 
-    # Search for exact and substring matches
-    query = """
-    MATCH (g:GearItem)
-    WHERE toLower(g.name) CONTAINS toLower($name)
-       OR toLower($name) CONTAINS toLower(g.name)
-    OPTIONAL MATCH (g)-[:IS_VARIANT_OF]->(pf:ProductFamily)
-    OPTIONAL MATCH (b:OutdoorBrand)-[:MANUFACTURES_ITEM]->(g)
-    RETURN g.name as name, g.brand as brand, g.category as category,
-           g.weight_grams as weight, g.price_usd as price,
-           pf.name as product_family,
-           b.name as manufacturer,
-           'substring_match' as match_type
-    LIMIT 10
-    """
-    substring_matches = execute_and_fetch(query, {"name": name})
-    results.extend(substring_matches)
-
-    # If brand provided, also search for same brand products
+    # Get all items from the same brand first (most likely duplicates)
     if brand:
         brand_query = """
         MATCH (g:GearItem)
         WHERE toLower(g.brand) = toLower($brand)
-        OPTIONAL MATCH (g)-[:IS_VARIANT_OF]->(pf:ProductFamily)
+           OR toLower(g.brand) CONTAINS toLower($brand)
+           OR toLower($brand) CONTAINS toLower(g.brand)
         RETURN g.name as name, g.brand as brand, g.category as category,
-               g.weight_grams as weight, g.price_usd as price,
-               pf.name as product_family,
-               'same_brand' as match_type
-        LIMIT 10
+               g.weight_grams as weight, g.price_usd as price
         """
         brand_matches = execute_and_fetch(brand_query, {"brand": brand})
-        # Add only if not already in results
-        existing_names = {r["name"].lower() for r in results}
-        for match in brand_matches:
-            if match["name"].lower() not in existing_names:
-                results.append(match)
 
-    # Search ProductFamily nodes
-    pf_query = """
-    MATCH (pf:ProductFamily)
-    WHERE toLower(pf.name) CONTAINS toLower($name)
-       OR toLower($name) CONTAINS toLower(pf.name)
-    OPTIONAL MATCH (g:GearItem)-[:IS_VARIANT_OF]->(pf)
-    RETURN pf.name as product_family, collect(g.name) as variants,
-           'product_family' as match_type
-    LIMIT 5
+        for item in brand_matches:
+            item_key = (item["name"], item.get("brand"))
+            if item_key in seen_items:
+                continue
+            seen_items.add(item_key)
+
+            sim = _calculate_similarity(name, item["name"], brand, item.get("brand"))
+
+            if sim["overall"] >= threshold:
+                item["similarity"] = sim["overall"]
+                item["match_type"] = "same_brand_fuzzy"
+                item["similarity_details"] = sim
+                results.append(item)
+
+    # Get items with similar names (any brand)
+    # Extract key words for database search
+    search_terms = _normalize_product_name(name).split()
+
+    for term in search_terms[:3]:  # Search first 3 significant terms
+        if len(term) < 3:
+            continue
+
+        term_query = """
+        MATCH (g:GearItem)
+        WHERE toLower(g.name) CONTAINS toLower($term)
+        RETURN g.name as name, g.brand as brand, g.category as category,
+               g.weight_grams as weight, g.price_usd as price
+        LIMIT 20
+        """
+        term_matches = execute_and_fetch(term_query, {"term": term})
+
+        for item in term_matches:
+            item_key = (item["name"], item.get("brand"))
+            if item_key in seen_items:
+                continue
+            seen_items.add(item_key)
+
+            sim = _calculate_similarity(name, item["name"], brand, item.get("brand"))
+
+            if sim["overall"] >= threshold:
+                item["similarity"] = sim["overall"]
+                item["match_type"] = "fuzzy_name_match"
+                item["similarity_details"] = sim
+                results.append(item)
+
+    # Also check for substring matches (catches "Arc Haul" in "Arc Haul Ultra 70L")
+    substring_query = """
+    MATCH (g:GearItem)
+    WHERE toLower(g.name) CONTAINS toLower($name)
+       OR toLower($name) CONTAINS toLower(g.name)
+    RETURN g.name as name, g.brand as brand, g.category as category,
+           g.weight_grams as weight, g.price_usd as price
+    LIMIT 15
     """
-    pf_matches = execute_and_fetch(pf_query, {"name": name})
-    for pf in pf_matches:
-        results.append({
-            "name": pf["product_family"],
-            "brand": None,
-            "category": "ProductFamily",
-            "variants": pf.get("variants", []),
-            "match_type": "product_family",
-        })
+    substring_matches = execute_and_fetch(substring_query, {"name": name})
 
-    return results
+    for item in substring_matches:
+        item_key = (item["name"], item.get("brand"))
+        if item_key in seen_items:
+            continue
+        seen_items.add(item_key)
+
+        sim = _calculate_similarity(name, item["name"], brand, item.get("brand"))
+
+        # Boost score for substring matches
+        sim["overall"] = min(100, sim["overall"] + 10)
+
+        if sim["overall"] >= threshold:
+            item["similarity"] = sim["overall"]
+            item["match_type"] = "substring_match"
+            item["similarity_details"] = sim
+            results.append(item)
+
+    # Sort by similarity score (highest first)
+    results.sort(key=lambda x: x.get("similarity", 0), reverse=True)
+
+    return results[:15]  # Return top 15 matches
 
 
 def scan_for_duplicates(min_similarity: int = 2) -> list[dict]:

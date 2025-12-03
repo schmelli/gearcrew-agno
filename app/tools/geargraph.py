@@ -102,25 +102,27 @@ def _parse_float(value: Any) -> Optional[float]:
 
 
 def find_similar_gear(name: str, brand: Optional[str] = None) -> str:
-    """Search for potential duplicate gear items before saving.
+    """Search for potential duplicate gear items before saving using fuzzy matching.
 
     **CRITICAL: You MUST call this BEFORE saving any gear item to prevent duplicates.**
 
-    This tool searches for:
+    This tool uses intelligent fuzzy matching that catches:
     - Exact name matches (case-insensitive)
+    - Typos and transcription errors (e.g., "Arc'o" vs "Arc Haul")
+    - Name variations (e.g., "X-Mid" vs "XMID" vs "X Mid")
     - Substring matches (e.g., "BRS-3000T" matches "BRS 3000T Ultralight Stove")
-    - Same brand products (to identify product families)
-    - Existing ProductFamily nodes
+    - Same brand products with similar names
+    - Products that sound similar even with different punctuation
 
     Args:
         name: Name of the product to search for
         brand: Brand name (highly recommended for accurate matching)
 
     Returns:
-        Detailed report of potential duplicates with recommendations
+        Detailed report of potential duplicates with similarity scores
     """
     try:
-        results = find_potential_duplicates(name, brand)
+        results = find_potential_duplicates(name, brand, threshold=60)
 
         if not results:
             return (
@@ -135,8 +137,27 @@ def find_similar_gear(name: str, brand: Optional[str] = None) -> str:
             (f" by {brand}" if brand else "") + ":\n"
         ]
 
+        # Check for high-confidence matches first
+        high_confidence = [m for m in results if m.get("similarity", 0) >= 85]
+        if high_confidence:
+            output.append("## HIGH CONFIDENCE MATCHES (85%+ similarity) - LIKELY SAME PRODUCT:\n")
+
         for i, match in enumerate(results, 1):
+            similarity = match.get("similarity", 0)
             match_type = match.get("match_type", "unknown")
+
+            # Add confidence indicator
+            if similarity >= 95:
+                confidence = "EXACT MATCH"
+            elif similarity >= 85:
+                confidence = "VERY HIGH"
+            elif similarity >= 75:
+                confidence = "HIGH"
+            elif similarity >= 65:
+                confidence = "MODERATE"
+            else:
+                confidence = "LOW"
+
             if match_type == "product_family":
                 output.append(
                     f"{i}. PRODUCT FAMILY: '{match['name']}'\n"
@@ -145,18 +166,30 @@ def find_similar_gear(name: str, brand: Optional[str] = None) -> str:
                 )
             else:
                 output.append(
-                    f"{i}. {match.get('name', 'Unknown')} by {match.get('brand', 'Unknown brand')}\n"
+                    f"{i}. **{match.get('name', 'Unknown')}** by {match.get('brand', 'Unknown brand')}\n"
+                    f"   Similarity: {similarity:.0f}% ({confidence})\n"
                     f"   Category: {match.get('category', 'unknown')}\n"
-                    f"   Weight: {match.get('weight', 'N/A')}g, Price: ${match.get('price', 'N/A')}\n"
-                    f"   Match type: {match_type}"
+                    f"   Weight: {match.get('weight', 'N/A')}g, Price: ${match.get('price', 'N/A')}"
                 )
                 if match.get("product_family"):
                     output.append(f"   Part of family: {match['product_family']}")
 
-        output.append("\n**DECISION REQUIRED:**")
-        output.append("- If this is THE SAME PRODUCT: Do NOT create a new entry")
-        output.append("- If this is a VARIANT: Link to existing ProductFamily")
-        output.append("- If truly NEW: Proceed with save_gear_to_graph")
+        output.append("\n## DECISION REQUIRED:")
+        if high_confidence:
+            output.append("- **STOP**: High-similarity matches found above!")
+            output.append("- These are very likely the SAME product with slightly different names")
+            output.append("- Use update_existing_gear() to add data to the existing entry")
+            output.append("- Do NOT create a duplicate")
+        else:
+            output.append("- If this is THE SAME PRODUCT: Do NOT create a new entry")
+            output.append("- If this is a VARIANT of an existing product: Link to ProductFamily")
+            output.append("- If truly NEW and unrelated: Proceed with save_gear_to_graph")
+
+        output.append("\n## NAME VERIFICATION:")
+        output.append("Before proceeding, please verify the correct product name from:")
+        output.append("- The manufacturer's official website")
+        output.append("- Cross-reference with the video/source description")
+        output.append("- Transcription errors are common (Arc'o vs Arc Haul, etc.)")
 
         return "\n".join(output)
 

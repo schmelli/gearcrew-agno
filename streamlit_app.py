@@ -190,6 +190,7 @@ with st.sidebar:
         "Agent Chat",
         "Playlist Manager",
         "Website Extractor",
+        "Manufacturer Catalog",
         "Data Enrichment",
         "Video Archive",
     ]
@@ -312,6 +313,11 @@ elif st.session_state.view_mode == "Website Extractor":
     from app.ui.website_extractor import render_website_extractor
 
     render_website_extractor()
+
+elif st.session_state.view_mode == "Manufacturer Catalog":
+    from app.ui.manufacturer_catalog import render_manufacturer_catalog
+
+    render_manufacturer_catalog()
 
 elif st.session_state.view_mode == "Data Enrichment":
     from app.ui.enrichment_view import render_enrichment_view

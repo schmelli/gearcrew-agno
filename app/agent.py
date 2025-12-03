@@ -28,6 +28,8 @@ from app.tools.web_scraper import (
     extract_product_data,
     extract_multiple_products,
     batch_extract_products,
+    discover_catalog,
+    quick_count_products,
 )
 from app.tools.geargraph import (
     find_similar_gear,
@@ -251,37 +253,59 @@ def search_gear_info(query: str) -> str:
 
 
 def discover_product_pages(website_url: str) -> str:
-    """Map a manufacturer's website to discover all product pages.
+    """Map a manufacturer's website to discover all product and collection pages.
 
     Use this when given a manufacturer's main website URL to find
     all their product pages for extraction.
+
+    **IMPORTANT**: Collection pages (like /collections/sleeping-pads) contain
+    multiple products and should be extracted using `extract_gear_list_page`.
+    Individual product pages should use `extract_gear_from_page`.
 
     Args:
         website_url: Base URL of the manufacturer's website (e.g., https://durstongear.com)
 
     Returns:
-        List of discovered product page URLs
+        List of discovered product page URLs and collection URLs
     """
     try:
-        result = map_website(website_url, max_pages=100)
+        result = map_website(website_url, max_pages=200)
 
         output = [f"## Website Map Results for {website_url}\n"]
         output.append(f"Total pages found: {result['total_count']}")
-        output.append(f"Product pages identified: {result['product_count']}\n")
+        output.append(f"Individual product pages: {result['product_count']}")
+        output.append(f"Collection/category pages: {result.get('collection_count', 0)}\n")
+
+        # Show collection pages first - these are more valuable for bulk extraction
+        collection_urls = result.get('collection_urls', [])
+        if collection_urls:
+            output.append("### Collection Pages (EXTRACT FIRST - contain multiple products):")
+            for i, url in enumerate(collection_urls, 1):
+                output.append(f"{i}. {url}")
+            output.append("")
+            output.append("**IMPORTANT**: Use `extract_gear_list_page(url)` on collection pages")
+            output.append("to extract ALL products from each category in one go!\n")
 
         if result['product_urls']:
-            output.append("### Product Pages:")
-            for i, url in enumerate(result['product_urls'][:20], 1):
+            output.append("### Individual Product Pages:")
+            for i, url in enumerate(result['product_urls'][:30], 1):
                 output.append(f"{i}. {url}")
 
-            if len(result['product_urls']) > 20:
-                output.append(f"\n... and {len(result['product_urls']) - 20} more")
+            if len(result['product_urls']) > 30:
+                output.append(f"\n... and {len(result['product_urls']) - 30} more")
 
-            output.append("\n**Next steps:**")
-            output.append("- Use `extract_gear_from_page(url)` to extract gear data from specific pages")
-            output.append("- Or analyze multiple pages in sequence")
-        else:
-            output.append("No obvious product pages found.")
+        output.append("\n---")
+        output.append("## Recommended Extraction Strategy:")
+        if collection_urls:
+            output.append("1. **FIRST**: Extract from collection pages using `extract_gear_list_page(url)`")
+            output.append("   - Each collection page contains many products")
+            output.append("   - This is much more efficient than individual pages")
+        output.append("2. **THEN**: Extract from individual product pages if needed")
+        output.append("   - Use `extract_gear_from_page(url)` for detailed single-product extraction")
+        output.append("3. **ALWAYS**: Check for duplicates with `find_similar_gear` before saving")
+
+        if not result['product_urls'] and not collection_urls:
+            output.append("\nNo obvious product or collection pages found.")
             output.append("Try using `fetch_webpage_content` on specific pages instead.")
 
         return "\n".join(output)
@@ -452,6 +476,112 @@ def extract_gear_list_page(url: str) -> str:
         return f"Error extracting gear list: {str(e)}"
 
 
+def discover_manufacturer_catalog(website_url: str) -> str:
+    """Discover a manufacturer's complete product catalog structure.
+
+    This is Phase 1 of the two-phase extraction process. It quickly maps
+    the website and counts products in each category WITHOUT doing full extraction.
+
+    Use this BEFORE extracting products to:
+    1. See what product categories the manufacturer has
+    2. Know how many products are in each category
+    3. Let the user decide which categories to extract
+
+    Args:
+        website_url: Base URL of the manufacturer's website (e.g., https://bigagnes.com)
+
+    Returns:
+        Structured catalog overview with categories and product counts
+    """
+    try:
+        catalog = discover_catalog(website_url, max_pages=300)
+
+        output = [f"# {catalog['brand_name']} Product Catalog\n"]
+        output.append(f"**Website:** {catalog['website_url']}")
+        output.append(f"**Total Categories:** {catalog['total_categories']}")
+        output.append(f"**Estimated Products:** {catalog['total_products_estimated']}")
+        output.append(f"**Individual Product Pages:** {catalog['individual_product_pages']}\n")
+
+        output.append("---\n")
+        output.append("## Product Categories\n")
+
+        categories = catalog.get('categories', [])
+        if categories:
+            for i, cat in enumerate(categories, 1):
+                cat_name = cat.get('category_name', f'Category {i}')
+                count = cat.get('product_count', 0)
+                url = cat.get('url', '')
+
+                output.append(f"### {i}. {cat_name} ({count} products)")
+                output.append(f"   URL: {url}")
+
+                # Show product names preview
+                product_names = cat.get('product_names', [])
+                if product_names:
+                    output.append("   Products:")
+                    for name in product_names[:5]:
+                        output.append(f"   - {name}")
+                    if len(product_names) > 5:
+                        output.append(f"   - ... and {len(product_names) - 5} more")
+
+                # Show subcategories if any
+                if cat.get('has_subcategories'):
+                    subcats = cat.get('subcategory_names', [])
+                    if subcats:
+                        output.append(f"   Subcategories: {', '.join(subcats)}")
+
+                output.append("")
+        else:
+            output.append("No product categories found.")
+
+        output.append("---\n")
+        output.append("## Next Steps\n")
+        output.append("The catalog discovery is complete. The user can now select which")
+        output.append("categories they want to extract. Wait for user input before proceeding.")
+        output.append("\nTo extract a specific category, use `extract_gear_list_page(url)` with")
+        output.append("the category URL from the list above.")
+
+        return "\n".join(output)
+
+    except ValueError as e:
+        return f"Error discovering catalog: {str(e)}"
+
+
+def extract_category_products(category_url: str, brand_name: str = "") -> str:
+    """Extract ALL products from a specific category/collection page.
+
+    This is Phase 2 of the two-phase extraction process. Use this AFTER
+    catalog discovery, when the user has selected specific categories.
+
+    IMPORTANT: This extracts EVERY product in the category. Do not skip
+    any products or try to "save tokens."
+
+    Args:
+        category_url: URL of the category/collection page to extract
+        brand_name: Name of the brand (for context)
+
+    Returns:
+        Extraction results with all products found
+    """
+    try:
+        # Use the existing extract_gear_list_page function
+        result = extract_gear_list_page(category_url)
+
+        # Add reminder about next steps
+        result += "\n\n---\n"
+        result += "## IMPORTANT: Complete the extraction!\n"
+        result += "For EACH product listed above:\n"
+        result += "1. Call `find_similar_gear(name, brand)` to check for duplicates\n"
+        result += "2. If new, call `save_gear_to_graph` with ALL available details\n"
+        result += "3. Call `link_extracted_gear_to_source` to link to this category page\n"
+        result += "\nDo NOT skip any products. Extract the complete list."
+
+        return result
+
+    except ValueError as e:
+        return f"Error extracting category products: {str(e)}"
+
+
 # All available tools for agents
 AGENT_TOOLS = [
     # Content fetching tools
@@ -479,6 +609,9 @@ AGENT_TOOLS = [
     discover_product_pages,  # Map manufacturer sites to find product URLs
     extract_gear_from_page,  # Extract structured data from single product page
     extract_gear_list_page,  # Extract ALL products from list/guide pages
+    # Two-phase catalog extraction tools
+    discover_manufacturer_catalog,  # Phase 1: Discover catalog structure and count products
+    extract_category_products,  # Phase 2: Extract all products from selected category
     # Glossary tools
     save_glossary_term,
     lookup_glossary_term,

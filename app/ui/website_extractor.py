@@ -159,17 +159,24 @@ Website URL: {url}
 Max Pages: {max_pages}
 
 Steps:
-1. Use `discover_product_pages` to map the website and find product pages
-2. For each product page found (up to 20):
-   a. Use `extract_gear_from_page` to get structured data
-   b. Use `find_similar_gear` to check for duplicates
+1. Use `discover_product_pages` to map the website and find product/collection pages
+
+2. **FIRST - Extract from Collection Pages** (most important!):
+   Collection pages (like /collections/tents, /collections/sleeping-pads) contain MANY products.
+   For each collection page found:
+   a. Use `extract_gear_list_page(url)` to get ALL products from that category
+   b. For each product extracted, use `find_similar_gear` to check for duplicates
    c. Only save truly new items with `save_gear_to_graph`
    d. Link items to their source URLs
 
+3. **THEN - Individual Product Pages** (if needed):
+   Only extract from individual /products/ pages if they weren't covered by collections.
+
 Report:
 - Total pages discovered
-- Number of product pages found
-- Gear items extracted (new vs existing)
+- Number of collection pages found and extracted
+- Number of individual product pages processed
+- Total gear items extracted (breakdown: new vs already existed)
 - Any errors encountered"""
         else:
             prompt = f"""Please map this manufacturer's website to discover product pages:
