@@ -6,7 +6,6 @@ import re
 from urllib.parse import urlparse
 
 import httpx
-from firecrawl import FirecrawlApp
 
 # Import Playwright scraper functions
 from app.tools.browser_scraper import (
@@ -14,6 +13,9 @@ from app.tools.browser_scraper import (
     extract_products_sync,
     map_website_sync as playwright_map_website,
 )
+
+# Import SmartFirecrawlClient
+from app.tools.smart_firecrawl import get_smart_firecrawl
 
 # Import Firecrawl-specific functions (for re-export)
 from app.tools.firecrawl_scraper import (
@@ -42,12 +44,9 @@ __all__ = [
 ]
 
 
-def _get_firecrawl_client() -> FirecrawlApp:
-    """Get Firecrawl client instance."""
-    api_key = os.getenv("FIRECRAWL_API_KEY")
-    if not api_key:
-        raise ValueError("FIRECRAWL_API_KEY environment variable is required")
-    return FirecrawlApp(api_key=api_key)
+def _get_firecrawl_client():
+    """Get SmartFirecrawl client instance with self-hosted + cloud fallback."""
+    return get_smart_firecrawl()
 
 
 def _is_product_url(url: str) -> bool:

@@ -1,22 +1,19 @@
 """Firecrawl-based scraper functions for GearCrew.
 
 This module contains Firecrawl-specific extraction functions that use
-the paid API for structured data extraction with schemas.
+the API for structured data extraction with schemas.
 
+Uses SmartFirecrawlClient for automatic self-hosted → cloud fallback.
 These are typically used as fallback when Playwright doesn't work,
 or for advanced extraction requiring LLM-based schema parsing.
 """
 
-import os
-from firecrawl import FirecrawlApp
+from app.tools.smart_firecrawl import get_smart_firecrawl
 
 
-def _get_firecrawl_client() -> FirecrawlApp:
-    """Get Firecrawl client instance."""
-    api_key = os.getenv("FIRECRAWL_API_KEY")
-    if not api_key:
-        raise ValueError("FIRECRAWL_API_KEY environment variable is required")
-    return FirecrawlApp(api_key=api_key)
+def _get_firecrawl_client():
+    """Get SmartFirecrawl client instance with self-hosted + cloud fallback."""
+    return get_smart_firecrawl()
 
 
 def extract_multiple_products(url: str) -> dict:
