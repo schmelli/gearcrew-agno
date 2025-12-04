@@ -3,15 +3,17 @@
 Uses self-hosted Firecrawl instance (free) as primary, with automatic
 fallback to cloud API (paid) on failure. Includes retry logic, timeout
 handling, and usage statistics tracking.
+
+Note: Self-hosted Firecrawl uses v1 API, cloud uses v2 API via library.
 """
 
-import asyncio
 import logging
 import os
 import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+import httpx
 from firecrawl import FirecrawlApp
 
 logger = logging.getLogger(__name__)
@@ -84,6 +86,70 @@ class ScrapeResult:
     error: str = ""
 
 
+class SelfHostedFirecrawl:
+    """Direct HTTP client for self-hosted Firecrawl v1 API."""
+
+    def __init__(self, api_url: str, api_key: str, timeout: float = 30.0):
+        self.api_url = api_url.rstrip("/")
+        self.api_key = api_key
+        self.timeout = timeout
+
+    def _headers(self) -> dict:
+        return {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+    def scrape(self, url: str, formats: list[str] = None, **kwargs) -> dict:
+        """Scrape a URL using v1 API."""
+        endpoint = f"{self.api_url}/v1/scrape"
+        payload = {"url": url}
+        if formats:
+            payload["formats"] = formats
+        payload.update(kwargs)
+
+        response = httpx.post(endpoint, headers=self._headers(), json=payload, timeout=self.timeout)
+        response.raise_for_status()
+        data = response.json()
+
+        if not data.get("success"):
+            raise ValueError(data.get("error", "Scrape failed"))
+        return data.get("data", {})
+
+    def search(self, query: str, limit: int = 5) -> dict:
+        """Search using v1 API."""
+        endpoint = f"{self.api_url}/v1/search"
+        payload = {"query": query, "limit": limit}
+
+        response = httpx.post(endpoint, headers=self._headers(), json=payload, timeout=self.timeout)
+        response.raise_for_status()
+        return response.json()
+
+    def map(self, url: str, limit: int = 100) -> dict:
+        """Map a website using v1 API."""
+        endpoint = f"{self.api_url}/v1/map"
+        payload = {"url": url, "limit": limit}
+
+        response = httpx.post(endpoint, headers=self._headers(), json=payload, timeout=self.timeout)
+        response.raise_for_status()
+        data = response.json()
+
+        if not data.get("success"):
+            raise ValueError(data.get("error", "Map failed"))
+        return data
+
+    def extract(self, urls: list[str], schema: dict, prompt: str = "") -> dict:
+        """Extract structured data using v1 API."""
+        endpoint = f"{self.api_url}/v1/extract"
+        payload = {"urls": urls, "schema": schema}
+        if prompt:
+            payload["prompt"] = prompt
+
+        response = httpx.post(endpoint, headers=self._headers(), json=payload, timeout=self.timeout)
+        response.raise_for_status()
+        return response.json()
+
+
 class SmartFirecrawlClient:
     """Firecrawl client with automatic self-hosted → cloud fallback."""
 
@@ -91,24 +157,20 @@ class SmartFirecrawlClient:
         """Initialize the client with optional config (defaults to env vars)."""
         self.config = config or FirecrawlConfig.from_env()
         self.stats = UsageStats()
-        self._self_hosted_client: Optional[FirecrawlApp] = None
+        self._self_hosted: Optional[SelfHostedFirecrawl] = None
         self._cloud_client: Optional[FirecrawlApp] = None
         self._init_clients()
 
     def _init_clients(self):
         """Initialize Firecrawl client instances."""
-        # Self-hosted client (primary)
         if self.config.self_hosted_url:
-            try:
-                self._self_hosted_client = FirecrawlApp(
-                    api_key=self.config.self_hosted_key,
-                    api_url=self.config.self_hosted_url,
-                )
-                logger.info(f"Self-hosted Firecrawl configured: {self.config.self_hosted_url}")
-            except Exception as e:
-                logger.warning(f"Failed to init self-hosted client: {e}")
+            self._self_hosted = SelfHostedFirecrawl(
+                self.config.self_hosted_url,
+                self.config.self_hosted_key,
+                self.config.timeout,
+            )
+            logger.info(f"Self-hosted Firecrawl configured: {self.config.self_hosted_url}")
 
-        # Cloud client (fallback)
         if self.config.cloud_api_key:
             try:
                 self._cloud_client = FirecrawlApp(api_key=self.config.cloud_api_key)
@@ -116,51 +178,39 @@ class SmartFirecrawlClient:
             except Exception as e:
                 logger.warning(f"Failed to init cloud client: {e}")
 
-        if not self._self_hosted_client and not self._cloud_client:
+        if not self._self_hosted and not self._cloud_client:
             raise ValueError("No Firecrawl client available. Set FIRECRAWL_SELF_HOSTED_URL or FIRECRAWL_API_KEY")
 
-    def _scrape_with_timeout(self, client: FirecrawlApp, url: str, **kwargs) -> Any:
-        """Execute scrape with timeout."""
-        import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future = executor.submit(client.scrape, url, **kwargs)
-            try:
-                return future.result(timeout=self.config.timeout)
-            except concurrent.futures.TimeoutError:
-                raise TimeoutError(f"Scrape timed out after {self.config.timeout}s")
-
     def scrape_url(self, url: str, formats: list[str] = None, **kwargs) -> ScrapeResult:
-        """Scrape a URL with automatic fallback.
-
-        Args:
-            url: URL to scrape
-            formats: Output formats (e.g., ["markdown", "html"])
-            **kwargs: Additional arguments passed to Firecrawl
-
-        Returns:
-            ScrapeResult with data and metadata
-        """
+        """Scrape a URL with automatic fallback."""
         formats = formats or ["markdown"]
-        kwargs["formats"] = formats
 
         # Try self-hosted first
-        if self._self_hosted_client:
+        if self._self_hosted:
             for attempt in range(self.config.max_retries + 1):
                 try:
                     logger.info(f"[Firecrawl] Self-hosted scrape attempt {attempt + 1}: {url}")
-                    result = self._scrape_with_timeout(self._self_hosted_client, url, **kwargs)
+                    result = self._self_hosted.scrape(url, formats=formats, **kwargs)
 
                     self.stats.self_hosted_calls += 1
                     logger.info(f"[Firecrawl] ✅ Self-hosted success (total: {self.stats.self_hosted_calls})")
 
-                    return self._parse_result(result, source="self-hosted", cost=0)
+                    return ScrapeResult(
+                        success=True,
+                        data=result,
+                        markdown=result.get("markdown", ""),
+                        html=result.get("html", result.get("rawHtml", "")),
+                        metadata=result.get("metadata", {}),
+                        source="self-hosted",
+                        cost=0,
+                    )
 
                 except Exception as e:
                     logger.warning(f"[Firecrawl] ⚠️ Self-hosted attempt {attempt + 1} failed: {e}")
                     self.stats.self_hosted_failures += 1
 
                     if attempt < self.config.max_retries:
-                        time.sleep((attempt + 1) * 1.0)  # Exponential backoff
+                        time.sleep((attempt + 1) * 1.0)
                     else:
                         logger.warning("[Firecrawl] All self-hosted retries exhausted")
 
@@ -171,16 +221,21 @@ class SmartFirecrawlClient:
         if self._cloud_client:
             try:
                 logger.info(f"[Firecrawl] 💰 Using cloud API: {url}")
-                result = self._cloud_client.scrape(url, **kwargs)
+                result = self._cloud_client.scrape(url, formats=formats, **kwargs)
 
                 self.stats.cloud_calls += 1
                 self.stats.total_credits += 1
-                logger.info(
-                    f"[Firecrawl] Cloud success (calls: {self.stats.cloud_calls}, "
-                    f"cost: ~${self.stats.estimated_cost:.3f})"
-                )
+                logger.info(f"[Firecrawl] Cloud success (calls: {self.stats.cloud_calls})")
 
-                return self._parse_result(result, source="cloud", cost=1)
+                return ScrapeResult(
+                    success=True,
+                    data=result,
+                    markdown=getattr(result, "markdown", "") or "",
+                    html=getattr(result, "html", "") or "",
+                    metadata=getattr(result, "metadata", {}) or {},
+                    source="cloud",
+                    cost=1,
+                )
 
             except Exception as e:
                 logger.error(f"[Firecrawl] ❌ Cloud API also failed: {e}")
@@ -197,11 +252,11 @@ class SmartFirecrawlClient:
 
     def search(self, query: str, limit: int = 5) -> Any:
         """Search the web with automatic fallback."""
-        if self._self_hosted_client:
+        if self._self_hosted:
             for attempt in range(self.config.max_retries + 1):
                 try:
                     logger.info(f"[Firecrawl] Self-hosted search: {query}")
-                    result = self._self_hosted_client.search(query, limit=limit)
+                    result = self._self_hosted.search(query, limit=limit)
                     self.stats.self_hosted_calls += 1
                     return result
                 except Exception as e:
@@ -214,7 +269,7 @@ class SmartFirecrawlClient:
                 logger.info(f"[Firecrawl] 💰 Cloud search: {query}")
                 result = self._cloud_client.search(query, limit=limit)
                 self.stats.cloud_calls += 1
-                self.stats.total_credits += limit  # Search costs ~1 credit per result
+                self.stats.total_credits += limit
                 return result
             except Exception as e:
                 raise ValueError(f"Search failed: {e}")
@@ -223,11 +278,11 @@ class SmartFirecrawlClient:
 
     def map(self, url: str, limit: int = 100) -> Any:
         """Map a website with automatic fallback."""
-        if self._self_hosted_client:
+        if self._self_hosted:
             for attempt in range(self.config.max_retries + 1):
                 try:
                     logger.info(f"[Firecrawl] Self-hosted map: {url}")
-                    result = self._self_hosted_client.map(url, limit=limit)
+                    result = self._self_hosted.map(url, limit=limit)
                     self.stats.self_hosted_calls += 1
                     return result
                 except Exception as e:
@@ -249,11 +304,11 @@ class SmartFirecrawlClient:
 
     def extract(self, urls: list[str], schema: dict, prompt: str = "") -> Any:
         """Extract structured data with automatic fallback."""
-        if self._self_hosted_client:
+        if self._self_hosted:
             for attempt in range(self.config.max_retries + 1):
                 try:
                     logger.info(f"[Firecrawl] Self-hosted extract: {urls}")
-                    result = self._self_hosted_client.extract(urls=urls, schema=schema, prompt=prompt)
+                    result = self._self_hosted.extract(urls, schema, prompt)
                     self.stats.self_hosted_calls += 1
                     return result
                 except Exception as e:
@@ -266,35 +321,12 @@ class SmartFirecrawlClient:
                 logger.info(f"[Firecrawl] 💰 Cloud extract: {urls}")
                 result = self._cloud_client.extract(urls=urls, schema=schema, prompt=prompt)
                 self.stats.cloud_calls += 1
-                self.stats.total_credits += len(urls) * 5  # Extract is more expensive
+                self.stats.total_credits += len(urls) * 5
                 return result
             except Exception as e:
                 raise ValueError(f"Extract failed: {e}")
 
         raise ValueError("No Firecrawl client available for extract")
-
-    def _parse_result(self, result: Any, source: str, cost: int) -> ScrapeResult:
-        """Parse Firecrawl result into ScrapeResult."""
-        markdown = ""
-        html = ""
-        metadata = {}
-
-        if hasattr(result, "markdown"):
-            markdown = result.markdown or ""
-        if hasattr(result, "html"):
-            html = result.html or ""
-        if hasattr(result, "metadata"):
-            metadata = result.metadata if isinstance(result.metadata, dict) else {}
-
-        return ScrapeResult(
-            success=True,
-            data=result,
-            markdown=markdown,
-            html=html,
-            metadata=metadata,
-            source=source,
-            cost=cost,
-        )
 
     def get_usage_stats(self) -> dict:
         """Get usage statistics."""
