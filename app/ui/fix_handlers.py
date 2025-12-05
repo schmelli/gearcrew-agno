@@ -4,7 +4,7 @@ import streamlit as st
 from typing import Optional
 
 from app.db.memgraph import execute_and_fetch, execute_cypher
-from app.tools.web_scraper import search_images, search_product_weights
+from app.tools.web_scraper import search_images, search_product_weights, research_product
 
 
 # Standard gear categories
@@ -495,4 +495,180 @@ def fix_set_price(item: dict, config: dict) -> bool:
     with col2:
         if st.button("Skip"):
             return "skip"
+    return False
+
+
+def _get_duplicate_group(name: str) -> list[dict]:
+    """Get all duplicate items with the same name."""
+    query = """
+    MATCH (g:GearItem {name: $name})
+    RETURN id(g) as node_id, g.name as name, g.brand as brand, g.category as category,
+           g.weight_grams as weight_grams, g.price_usd as price_usd,
+           g.imageUrl as imageUrl, g.productUrl as productUrl,
+           g.description as description
+    ORDER BY id(g)
+    """
+    return execute_and_fetch(query, {"name": name})
+
+
+def _merge_properties(primary: dict, others: list[dict]) -> dict:
+    """Merge properties from other items into primary, filling in blanks."""
+    merged = dict(primary)
+    fields = ["brand", "category", "weight_grams", "price_usd", "imageUrl", "productUrl", "description"]
+    for field in fields:
+        if not merged.get(field):
+            for other in others:
+                if other.get(field):
+                    merged[field] = other[field]
+                    break
+    return merged
+
+
+def fix_merge_duplicates(item: dict, config: dict) -> bool:
+    """Handle merging duplicate gear items with online research."""
+    name = item.get(config["name_field"], "Unknown")
+    idx = st.session_state.fixer_current_index
+    rk = f"research_{idx}"  # Research results key
+
+    # Get all duplicates for this name
+    dk = f"duplicates_{idx}"
+    if dk not in st.session_state:
+        st.session_state[dk] = _get_duplicate_group(name)
+
+    duplicates = st.session_state.get(dk, [])
+    if len(duplicates) < 2:
+        st.warning(f"No duplicates found for '{name}'. May have been already merged.")
+        if st.button("Skip"):
+            return "skip"
+        return False
+
+    st.markdown(f"### Merge Duplicates: {name}")
+    st.caption(f"Found {len(duplicates)} items with this name")
+
+    # Research section
+    st.divider()
+    with st.expander("**Research this product online**", expanded=rk not in st.session_state):
+        brand_hint = duplicates[0].get("brand", "") if duplicates else ""
+        c1, c2 = st.columns([3, 1])
+        with c1:
+            search_q = st.text_input("Search:", value=f"{brand_hint} {name}".strip(), key=f"rq_{idx}")
+        with c2:
+            if st.button("Search", key=f"rsearch_{idx}"):
+                with st.spinner("Researching..."):
+                    st.session_state[rk] = research_product(search_q, num_results=4)
+                st.rerun()
+
+        research = st.session_state.get(rk, [])
+        if research:
+            for r in research:
+                specs = []
+                if r.get("weight_grams"):
+                    specs.append(f"{r['weight_grams']}g")
+                if r.get("price_usd"):
+                    specs.append(f"${r['price_usd']}")
+                spec_str = f" ({', '.join(specs)})" if specs else ""
+                st.markdown(f"**[{r['source']}]({r['url']})**{spec_str}")
+                st.caption(r.get("snippet", "")[:150])
+
+    # Display duplicates comparison
+    st.divider()
+    st.write("**Select the PRIMARY item to keep** (others will be deleted):")
+
+    # Create comparison table
+    cols = st.columns(len(duplicates))
+    selected_key = f"selected_primary_{idx}"
+
+    for i, dup in enumerate(duplicates):
+        with cols[i]:
+            node_id = dup.get("node_id", i)
+            is_selected = st.session_state.get(selected_key) == node_id
+
+            # Radio-like selection via button
+            if st.button(f"Select #{i+1}", key=f"sel_{idx}_{i}",
+                         type="primary" if is_selected else "secondary"):
+                st.session_state[selected_key] = node_id
+                st.rerun()
+
+            st.markdown(f"**Node ID:** {node_id}")
+            if dup.get("brand"):
+                st.write(f"Brand: {dup['brand']}")
+            if dup.get("category"):
+                st.write(f"Category: {dup['category']}")
+            if dup.get("weight_grams"):
+                st.write(f"Weight: {dup['weight_grams']}g")
+            if dup.get("price_usd"):
+                st.write(f"Price: ${dup['price_usd']}")
+            if dup.get("imageUrl"):
+                st.image(dup["imageUrl"], width=100)
+            if dup.get("productUrl"):
+                st.caption(f"[Link]({dup['productUrl']})")
+
+    selected_id = st.session_state.get(selected_key)
+
+    # Action buttons
+    st.divider()
+    c1, c2, c3 = st.columns(3)
+
+    def _cleanup():
+        st.session_state.pop(dk, None)
+        st.session_state.pop(rk, None)
+        st.session_state.pop(selected_key, None)
+
+    with c1:
+        if st.button("Merge & Keep Selected", type="primary", disabled=selected_id is None):
+            primary = next((d for d in duplicates if d.get("node_id") == selected_id), None)
+            others = [d for d in duplicates if d.get("node_id") != selected_id]
+
+            if primary and others:
+                # Merge properties from others into primary
+                merged = _merge_properties(primary, others)
+
+                # Update primary with merged properties
+                update_q = """
+                MATCH (g:GearItem) WHERE id(g) = $id
+                SET g.brand = $brand, g.category = $category,
+                    g.weight_grams = $weight, g.price_usd = $price,
+                    g.imageUrl = $image, g.productUrl = $url,
+                    g.description = $desc
+                RETURN g.name
+                """
+                execute_cypher(update_q, {
+                    "id": selected_id,
+                    "brand": merged.get("brand"),
+                    "category": merged.get("category"),
+                    "weight": merged.get("weight_grams"),
+                    "price": merged.get("price_usd"),
+                    "image": merged.get("imageUrl"),
+                    "url": merged.get("productUrl"),
+                    "desc": merged.get("description"),
+                })
+
+                # Delete the other duplicates
+                for other in others:
+                    delete_q = "MATCH (g:GearItem) WHERE id(g) = $id DETACH DELETE g"
+                    execute_cypher(delete_q, {"id": other["node_id"]})
+
+                _cleanup()
+                st.success(f"Merged {len(others)} duplicate(s) into primary item")
+                return True
+
+    with c2:
+        if st.button("Delete All Duplicates", type="secondary"):
+            confirm_key = f"confirm_delete_all_{idx}"
+            if st.session_state.get(confirm_key):
+                for dup in duplicates:
+                    delete_q = "MATCH (g:GearItem) WHERE id(g) = $id DETACH DELETE g"
+                    execute_cypher(delete_q, {"id": dup["node_id"]})
+                _cleanup()
+                st.success(f"Deleted all {len(duplicates)} items named '{name}'")
+                return True
+            else:
+                st.session_state[confirm_key] = True
+                st.warning("Click again to confirm deletion of ALL duplicates")
+
+    with c3:
+        if st.button("Skip"):
+            _cleanup()
+            return "skip"
+
     return False

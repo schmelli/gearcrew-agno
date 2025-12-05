@@ -35,6 +35,7 @@ __all__ = [
     "search_web",
     "search_images",
     "search_product_weights",
+    "research_product",
     "map_website",
     "extract_multiple_products",
     "extract_product_data",
@@ -281,6 +282,66 @@ def search_product_weights(product_name: str, brand: str = "", num_sources: int 
         return results[:num_sources]
     except Exception as e:
         logger.error(f"Weight search failed: {e}")
+        return []
+
+
+def research_product(product_name: str, brand: str = "", num_results: int = 5) -> list[dict]:
+    """Research a product online to gather specs and verify information.
+
+    Searches for product information and returns structured results with
+    key specs like weight, price, category, and descriptions.
+
+    Args:
+        product_name: Name of the product to research
+        brand: Optional brand name for more accurate results
+        num_results: Number of search results to return
+
+    Returns:
+        List of dicts with 'title', 'url', 'snippet', 'source', and extracted specs
+    """
+    api_key = os.getenv("SERPER_API_KEY")
+    if not api_key:
+        logger.warning("SERPER_API_KEY not set, product research unavailable")
+        return []
+
+    query = f"{brand} {product_name} specs specifications".strip() if brand else f"{product_name} specs"
+    results = []
+
+    try:
+        resp = httpx.post(
+            "https://google.serper.dev/search",
+            headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
+            json={"q": query, "num": num_results * 2},
+            timeout=10.0,
+        )
+        resp.raise_for_status()
+        organic = resp.json().get("organic", [])
+
+        for item in organic[:num_results]:
+            url = item.get("link", "")
+            snippet = item.get("snippet", "")
+            title = item.get("title", "")
+
+            # Extract any weights from snippet
+            weights = _extract_weights_from_text(snippet)
+            weight_grams = weights[0]["grams"] if weights else None
+
+            # Extract price from snippet
+            price_match = re.search(r'\$(\d+(?:\.\d{2})?)', snippet)
+            price_usd = float(price_match.group(1)) if price_match else None
+
+            results.append({
+                "title": title,
+                "url": url,
+                "source": urlparse(url).netloc.replace("www.", ""),
+                "snippet": snippet[:300],
+                "weight_grams": weight_grams,
+                "price_usd": price_usd,
+            })
+
+        return results
+    except Exception as e:
+        logger.error(f"Product research failed for '{product_name}': {e}")
         return []
 
 

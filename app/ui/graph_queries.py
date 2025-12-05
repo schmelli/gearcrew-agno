@@ -85,10 +85,14 @@ LIMIT 50
 MATCH (g:GearItem)
 WITH g.name as name, collect(g) as items, count(g) as cnt
 WHERE cnt > 1
-RETURN name, cnt as duplicate_count,
-       [i IN items | i.brand][0..3] as brands
-ORDER BY cnt DESC
-LIMIT 30
+UNWIND items as item
+RETURN name, cnt as duplicate_count, id(item) as node_id,
+       item.brand as brand, item.category as category,
+       item.weight_grams as weight_grams, item.price_usd as price_usd,
+       item.imageUrl as imageUrl, item.productUrl as productUrl,
+       item.description as description
+ORDER BY name, node_id
+LIMIT 100
 """,
     # Product Families
     "orphan_families": """

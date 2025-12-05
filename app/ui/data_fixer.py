@@ -16,6 +16,7 @@ from app.ui.fix_handlers import (
     fix_set_category,
     fix_set_weight,
     fix_set_price,
+    fix_merge_duplicates,
 )
 
 
@@ -116,6 +117,7 @@ FIX_HANDLERS = {
     FixType.SET_CATEGORY: fix_set_category,
     FixType.SET_WEIGHT: fix_set_weight,
     FixType.SET_PRICE: fix_set_price,
+    FixType.MERGE_DUPLICATES: fix_merge_duplicates,
 }
 
 
