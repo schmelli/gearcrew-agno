@@ -193,6 +193,7 @@ with st.sidebar:
         "Manufacturer Catalog",
         "Data Enrichment",
         "Video Archive",
+        "Firebase Sync",
     ]
     view_mode = st.radio(
         "View:",
@@ -328,3 +329,8 @@ elif st.session_state.view_mode == "Video Archive":
     from app.ui.archive_view import render_archive_view
 
     render_archive_view()
+
+elif st.session_state.view_mode == "Firebase Sync":
+    from app.ui.firebase_sync_view import render_firebase_sync_view
+
+    render_firebase_sync_view()

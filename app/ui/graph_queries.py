@@ -40,6 +40,9 @@ PRESET_CATEGORIES = {
     "Lightest gear items": "lightest_items",
     "Most expensive gear": "most_expensive",
     "Gear by category": "gear_by_category",
+    "--- Product Families ---": None,
+    "Products not in families": "products_not_in_families",
+    "Potential family candidates": "family_candidates",
 }
 
 # The actual Cypher queries, keyed by the query_key from PRESET_CATEGORIES
@@ -247,5 +250,26 @@ WHERE g.category IS NOT NULL AND g.category <> ''
 RETURN g.category as category, count(g) as count,
        collect(g.name)[0..5] as sample_items
 ORDER BY count DESC
+""",
+    # Product Families
+    "products_not_in_families": """
+MATCH (g:GearItem)
+WHERE NOT (g)-[:VARIANT_OF]->(:ProductFamily)
+  AND g.name =~ '.*[0-9]+.*'
+RETURN g.name as name, g.brand as brand, g.category as category, id(g) as node_id
+ORDER BY g.brand, g.name
+LIMIT 100
+""",
+    "family_candidates": """
+MATCH (g:GearItem)
+WHERE NOT (g)-[:VARIANT_OF]->(:ProductFamily)
+  AND g.name =~ '.*[0-9]+.*'
+WITH g.brand as brand, g
+ORDER BY g.name
+WITH brand, collect({name: g.name, category: g.category, node_id: id(g)}) as products
+WHERE size(products) >= 2
+RETURN brand, size(products) as product_count, products[0..10] as sample_products
+ORDER BY product_count DESC
+LIMIT 50
 """,
 }

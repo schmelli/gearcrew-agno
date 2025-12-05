@@ -35,6 +35,7 @@ __all__ = [
     "search_web",
     "search_images",
     "search_product_weights",
+    "verify_brand_product",
     "research_product",
     "map_website",
     "extract_multiple_products",
@@ -283,6 +284,149 @@ def search_product_weights(product_name: str, brand: str = "", num_sources: int 
     except Exception as e:
         logger.error(f"Weight search failed: {e}")
         return []
+
+
+def verify_brand_product(product_name: str, heard_brand: str) -> dict:
+    """VERIFY a brand name and product by searching for the actual manufacturer.
+
+    **CRITICAL**: Call this BEFORE saving ANY product when the brand name
+    is uncertain, heard in audio, or could be misspelled.
+
+    This tool searches the web to find the REAL manufacturer and correct
+    product name. Transcription errors are VERY common - don't trust what
+    you heard without verification!
+
+    Common errors this catches:
+    - "Atote" -> "Adotec Gear" (misheard brand)
+    - "Arc'o" -> "Zpacks" (misheard product name "Arc Haul")
+    - "Thermarest" -> "Therm-a-Rest" (spelling variation)
+
+    Args:
+        product_name: The product name as heard/read
+        heard_brand: The brand name as heard/read (may be wrong!)
+
+    Returns:
+        Dict with verification results:
+        - verified: bool - whether verification was successful
+        - correct_brand: str - the ACTUAL brand name
+        - correct_product: str - the correct product name
+        - manufacturer_url: str - official manufacturer URL if found
+        - confidence: str - "high", "medium", "low"
+        - evidence: list[str] - URLs that support this finding
+        - notes: str - explanation of findings
+    """
+    api_key = os.getenv("SERPER_API_KEY")
+    if not api_key:
+        logger.warning("SERPER_API_KEY not set, brand verification unavailable")
+        return {
+            "verified": False,
+            "correct_brand": heard_brand,
+            "correct_product": product_name,
+            "manufacturer_url": "",
+            "confidence": "none",
+            "evidence": [],
+            "notes": "SERPER_API_KEY not configured - CANNOT VERIFY",
+        }
+
+    # Search for the product to find the real manufacturer
+    query = f'"{product_name}" outdoor gear manufacturer'
+    if heard_brand:
+        query = f'"{product_name}" "{heard_brand}" outdoor gear'
+
+    try:
+        resp = httpx.post(
+            "https://google.serper.dev/search",
+            headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
+            json={"q": query, "num": 10},
+            timeout=15.0,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        organic = data.get("organic", [])
+
+        # Analyze results to find the real brand
+        found_brands = {}
+        evidence_urls = []
+        manufacturer_url = ""
+
+        for item in organic:
+            url = item.get("link", "")
+            title = item.get("title", "").lower()
+            snippet = item.get("snippet", "").lower()
+            domain = urlparse(url).netloc.replace("www.", "")
+
+            # Check if this looks like an official manufacturer page
+            if product_name.lower() in title or product_name.lower() in snippet:
+                evidence_urls.append(url)
+
+                # Extract brand from domain (e.g., adotecgear.com -> Adotec Gear)
+                if ".com" in domain or ".co" in domain:
+                    brand_from_domain = domain.split(".")[0]
+                    # Clean up brand name
+                    brand_from_domain = re.sub(r'gear$', ' Gear', brand_from_domain)
+                    brand_from_domain = brand_from_domain.replace("-", " ").title()
+
+                    if brand_from_domain not in found_brands:
+                        found_brands[brand_from_domain] = {
+                            "count": 0,
+                            "is_manufacturer": False,
+                            "url": url,
+                        }
+                    found_brands[brand_from_domain]["count"] += 1
+
+                    # Check if this is the manufacturer's own site
+                    if "/product" in url or product_name.lower().replace(" ", "-") in url:
+                        found_brands[brand_from_domain]["is_manufacturer"] = True
+                        manufacturer_url = url
+
+        # Determine the most likely correct brand
+        if found_brands:
+            # Prefer manufacturer sites
+            manufacturers = {k: v for k, v in found_brands.items() if v["is_manufacturer"]}
+            if manufacturers:
+                correct_brand = max(manufacturers.items(), key=lambda x: x[1]["count"])[0]
+                confidence = "high"
+            else:
+                correct_brand = max(found_brands.items(), key=lambda x: x[1]["count"])[0]
+                confidence = "medium"
+
+            # Check if heard brand was wrong
+            brand_matches = heard_brand.lower().replace(" ", "") in correct_brand.lower().replace(" ", "")
+
+            return {
+                "verified": True,
+                "correct_brand": correct_brand,
+                "correct_product": product_name,
+                "manufacturer_url": manufacturer_url,
+                "confidence": confidence,
+                "evidence": evidence_urls[:3],
+                "notes": f"Found brand '{correct_brand}' from web search. "
+                         f"{'Matches' if brand_matches else 'DIFFERENT FROM'} heard brand '{heard_brand}'.",
+            }
+
+        # No clear brand found
+        return {
+            "verified": False,
+            "correct_brand": heard_brand,
+            "correct_product": product_name,
+            "manufacturer_url": "",
+            "confidence": "low",
+            "evidence": evidence_urls[:3],
+            "notes": f"Could not verify brand. Searched for '{product_name}' but no clear manufacturer found. "
+                     f"DO NOT save with unverified brand '{heard_brand}'.",
+        }
+
+    except Exception as e:
+        logger.error(f"Brand verification failed: {e}")
+        return {
+            "verified": False,
+            "correct_brand": heard_brand,
+            "correct_product": product_name,
+            "manufacturer_url": "",
+            "confidence": "none",
+            "evidence": [],
+            "notes": f"Verification failed: {e}. DO NOT claim verification without evidence.",
+        }
 
 
 def research_product(product_name: str, brand: str = "", num_results: int = 5) -> list[dict]:

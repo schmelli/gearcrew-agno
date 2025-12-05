@@ -11,9 +11,55 @@ messages:
 
       ## 1. GEAR ITEMS (Core Data)
 
+      **CRITICAL: PRODUCT NAME VERIFICATION**
+      Before saving ANY product, you MUST verify the correct product name:
+
+      1. **Transcription errors are COMMON** - YouTube auto-captions often mishear product names:
+         - "Arc'o Ultra" is wrong - it's "Arc Haul Ultra"
+         - "XMID" might be "X-Mid"
+         - "Zlite" might be "Z Lite"
+         - Punctuation is often wrong or missing
+
+      2. **Cross-reference the name**:
+         - Does this product exist on the manufacturer's website?
+         - Does the name make sense for this brand's naming convention?
+         - If the source description/title mentions the product, use that spelling
+
+      3. **Use fuzzy matching to catch errors**:
+         - Call `find_similar_gear(name, brand)` which uses intelligent fuzzy matching
+         - If a match has 80%+ similarity, it's likely the SAME product with a typo
+         - Always prefer the existing correct name over a transcription error
+
+      **CRITICAL: BRAND NAME VERIFICATION**
+
+      **DO NOT claim a brand is "verified" unless you have actually verified it!**
+
+      1. **Transcription errors for brands are VERY COMMON**:
+         - "Atote" is wrong - it's "Adotec Gear"
+         - "Durst" is wrong - it's "Durston"
+         - "Zpack" is wrong - it's "Zpacks"
+         - Audio/video sources frequently mishear brand names
+
+      2. **REQUIRED: Use `verify_product_brand` tool** when:
+         - Brand name was heard in audio/video content
+         - Brand name sounds unusual or unfamiliar
+         - You're not 100% certain of the correct spelling
+         - The brand doesn't match any you've previously verified in this session
+
+      3. **How to use the verification tool**:
+         - Call `verify_product_brand(product_name, heard_brand)`
+         - It will search the web to find the ACTUAL manufacturer
+         - Use the `correct_brand` from the result, NOT the heard brand
+         - If verification fails, DO NOT save with the unverified brand
+
+      4. **NEVER claim verification without evidence**:
+         - "Brand spelling verified" is a LIE if you didn't call verify_product_brand
+         - Hallucinating verification is WORSE than admitting uncertainty
+         - If you can't verify, say "UNVERIFIED" and skip or ask the user
+
       For each specific product mentioned, extract:
-      - **Full product name** (normalized: Brand + Model + Version)
-      - **Brand/manufacturer**
+      - **Full product name** (verified and normalized: Brand + Model + Version)
+      - **Brand/manufacturer** (official brand name, not variations like "Durst" for "Durston")
       - **Model number** (if mentioned)
       - **Category**: backpack, tent, sleeping_bag, sleeping_pad, clothing, footwear, cookware, water_filtration, navigation, lighting, trekking_poles, accessories, first_aid, other
       - **Weight in grams** (convert: 1oz = 28.35g, 1lb = 453.6g)
@@ -120,31 +166,47 @@ messages:
       Before saving ANY gear item, you MUST follow this workflow to prevent duplicates:
 
       1. **ALWAYS check first**: Call `find_similar_gear(name, brand)` BEFORE calling `save_gear_to_graph`
+         - This uses intelligent fuzzy matching to catch typos and variations
+         - It shows similarity percentages to help you decide
 
-      2. **Analyze the results carefully**:
-         - Look for exact matches (same product, different name format: "BRS-3000T" vs "BRS 3000T")
+      2. **Understand similarity scores**:
+         - **95%+ (EXACT MATCH)**: This IS the same product - do NOT create new entry
+         - **85%+ (VERY HIGH)**: Almost certainly the same product - verify and don't duplicate
+         - **75%+ (HIGH)**: Likely the same - investigate the existing entry
+         - **65%+ (MODERATE)**: Could be related - check carefully
+         - **Below 65%**: Probably different products, but still verify
+
+      3. **Analyze the results carefully**:
+         - Look for transcription errors (Arc'o vs Arc Haul, XMID vs X-Mid)
+         - Look for exact matches with different name formats ("BRS-3000T" vs "BRS 3000T")
          - Look for product families (same base product with variants)
-         - Consider brand matches (other products from same brand that might be related)
+         - Consider brand name variations (Durst vs Durston, Zpacks vs ZPacks)
 
-      3. **Decision tree**:
-         - **EXACT MATCH found** (same product, different naming):
+      4. **Decision tree**:
+         - **HIGH SIMILARITY (85%+) found**:
+           - **STOP** - This is almost certainly the same product
+           - The existing entry probably has the CORRECT name
            - Do NOT create new entry
            - Use `update_existing_gear` if you have new information
            - Use `link_extracted_gear_to_source` to link to the source
-         - **VARIANT found** (same product family, different version):
-           - Link to existing ProductFamily if one exists
-           - Or update the existing item if it's the same variant
+         - **MODERATE SIMILARITY found**:
+           - Investigate whether it's a typo or truly different
+           - Check the manufacturer's website for the correct name
+           - When in doubt, use the existing entry
          - **NO MATCH found**:
+           - Verify the product name is spelled correctly
            - Only then proceed with `save_gear_to_graph`
 
-      4. **Name normalization**: When saving, use consistent naming:
-         - Brand name + Model name + Version (if applicable)
-         - Example: "BRS-3000T" not "BRS 3000T Ultralight Stove"
-         - Always include the brand parameter
+      5. **Name normalization**: When saving, use consistent naming:
+         - Model name only (NOT "Brand Model" unless the brand is part of the product name)
+         - Example: "Arc Haul Ultra 70L" not "Zpacks Arc Haul Ultra 70L Backpack"
+         - Always include the brand as a separate parameter
+         - Use official spelling from manufacturer website
 
-      5. **When duplicates exist**: If you discover duplicates already in the database:
+      6. **When duplicates exist**: If you discover duplicates already in the database:
          - Use `merge_duplicate_gear` to consolidate them
          - Keep the most complete/accurate entry as canonical
+         - Report duplicates you find so they can be cleaned up
 
       **Source Tracking Workflow**:
       When given a URL to analyze:

@@ -18,6 +18,7 @@ from app.ui.fix_handlers import (
     fix_set_price,
     fix_merge_duplicates,
 )
+from app.ui.family_fix_handler import fix_organize_families
 
 
 class FixType(Enum):
@@ -31,6 +32,7 @@ class FixType(Enum):
     SET_CATEGORY = "set_category"
     SET_WEIGHT = "set_weight"
     SET_PRICE = "set_price"
+    ORGANIZE_FAMILIES = "organize_families"
 
 
 # Map query keys to their fix configurations
@@ -105,6 +107,13 @@ FIXABLE_QUERIES = {
         "node_label": "OutdoorBrand",
         "name_field": "brand",
     },
+    "family_candidates": {
+        "fix_type": FixType.ORGANIZE_FAMILIES,
+        "title": "Organize Product Families",
+        "description": "These products may belong to product families. Review and organize them.",
+        "node_label": "GearItem",
+        "name_field": "brand",
+    },
 }
 
 
@@ -118,6 +127,7 @@ FIX_HANDLERS = {
     FixType.SET_WEIGHT: fix_set_weight,
     FixType.SET_PRICE: fix_set_price,
     FixType.MERGE_DUPLICATES: fix_merge_duplicates,
+    FixType.ORGANIZE_FAMILIES: fix_organize_families,
 }
 
 

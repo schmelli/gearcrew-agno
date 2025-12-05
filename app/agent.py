@@ -30,6 +30,7 @@ from app.tools.web_scraper import (
     batch_extract_products,
     discover_catalog,
     quick_count_products,
+    verify_brand_product,
 )
 from app.tools.geargraph import (
     find_similar_gear,
@@ -582,6 +583,62 @@ def extract_category_products(category_url: str, brand_name: str = "") -> str:
         return f"Error extracting category products: {str(e)}"
 
 
+def verify_product_brand(product_name: str, heard_brand: str) -> str:
+    """VERIFY a brand name before saving ANY product to the database.
+
+    **CRITICAL - MUST USE THIS TOOL** when:
+    - Brand name was heard in audio/video (transcription errors are VERY common!)
+    - Brand name spelling is uncertain
+    - Brand is unfamiliar or you haven't verified it before in this session
+
+    This tool searches the web to find the ACTUAL manufacturer.
+
+    Common errors this catches:
+    - "Atote" -> "Adotec Gear" (misheard brand)
+    - "Arc'o" -> "Zpacks" (misheard product name "Arc Haul")
+    - "Thermarest" -> "Therm-a-Rest" (spelling variation)
+
+    DO NOT claim a brand is "verified" unless you have called this tool!
+
+    Args:
+        product_name: The product name as heard/read
+        heard_brand: The brand name as heard/read (may be wrong!)
+
+    Returns:
+        Verification result with correct brand name and evidence
+    """
+    try:
+        result = verify_brand_product(product_name, heard_brand)
+
+        output = ["## Brand Verification Result\n"]
+        output.append(f"**Product:** {product_name}")
+        output.append(f"**Heard Brand:** {heard_brand}")
+        output.append(f"**Verified:** {'YES' if result['verified'] else 'NO'}")
+        output.append(f"**Correct Brand:** {result['correct_brand']}")
+        output.append(f"**Confidence:** {result['confidence']}")
+
+        if result['manufacturer_url']:
+            output.append(f"**Manufacturer URL:** {result['manufacturer_url']}")
+
+        if result['evidence']:
+            output.append("\n**Evidence URLs:**")
+            for url in result['evidence']:
+                output.append(f"- {url}")
+
+        output.append(f"\n**Notes:** {result['notes']}")
+
+        if not result['verified']:
+            output.append("\n---")
+            output.append("**WARNING:** Could not verify this brand!")
+            output.append("DO NOT save with unverified brand name.")
+            output.append("Search for more information or skip this product.")
+
+        return "\n".join(output)
+
+    except Exception as e:
+        return f"Error verifying brand: {str(e)}"
+
+
 # All available tools for agents
 AGENT_TOOLS = [
     # Content fetching tools
@@ -589,6 +646,8 @@ AGENT_TOOLS = [
     fetch_youtube_playlist,  # Fetch playlist and check which videos need processing
     fetch_webpage_content,
     search_gear_info,
+    # Brand verification - MUST USE before saving unfamiliar brands!
+    verify_product_brand,  # Verify brand names heard in audio before saving
     # GearGraph database tools - DUPLICATE CHECK FIRST!
     find_similar_gear,  # MUST call before save_gear_to_graph
     check_gear_exists,
