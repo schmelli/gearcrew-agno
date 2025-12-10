@@ -157,28 +157,36 @@ def scrape_webpage(url: str, include_markdown: bool = True) -> str:
 
 
 def search_web(query: str, num_results: int = 5) -> list[dict]:
-    """Search the web and return results. Uses Firecrawl API."""
+    """Search the web and return results. Uses Serper API.
+
+    Note: Self-hosted Firecrawl only supports /v1/scrape and /v1/map,
+    so we use Serper for web searches instead.
+    """
+    api_key = os.getenv("SERPER_API_KEY")
+    if not api_key:
+        logger.warning("SERPER_API_KEY not set, web search unavailable")
+        return []
+
     try:
-        client = _get_firecrawl_client()
-        result = client.search(query, limit=num_results)
+        response = httpx.post(
+            "https://google.serper.dev/search",
+            headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
+            json={"q": query, "num": num_results},
+            timeout=10.0,
+        )
+        response.raise_for_status()
+        data = response.json()
 
         search_results = []
-        if hasattr(result, "web") and result.web:
-            for item in result.web[:num_results]:
-                search_results.append({
-                    "url": getattr(item, "url", ""),
-                    "title": getattr(item, "title", ""),
-                    "snippet": getattr(item, "description", ""),
-                })
-        elif hasattr(result, "results") and result.results:
-            for item in result.results[:num_results]:
-                search_results.append({
-                    "url": getattr(item, "url", ""),
-                    "title": getattr(item, "title", ""),
-                    "snippet": getattr(item, "description", ""),
-                })
+        for item in data.get("organic", [])[:num_results]:
+            search_results.append({
+                "url": item.get("link", ""),
+                "title": item.get("title", ""),
+                "snippet": item.get("snippet", ""),
+            })
         return search_results
     except Exception as e:
+        logger.error(f"Web search failed for '{query}': {e}")
         raise ValueError(f"Search failed for '{query}': {str(e)}")
 
 

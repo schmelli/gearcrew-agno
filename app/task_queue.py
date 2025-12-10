@@ -33,6 +33,10 @@ class Task:
     created_at: datetime = field(default_factory=datetime.now)
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
+    # Progress tracking
+    current_activity: str = ""
+    activities: list = field(default_factory=list)
+    tools_used: list = field(default_factory=list)
 
     @property
     def duration_seconds(self) -> Optional[float]:
@@ -133,7 +137,7 @@ class TaskQueue:
             self._worker_thread.start()
 
     def _worker_loop(self):
-        """Background worker that processes tasks."""
+        """Background worker that processes tasks with streaming progress."""
         while not self._stop_event.is_set():
             try:
                 # Wait for a task with timeout to allow checking stop event
@@ -150,24 +154,66 @@ class TaskQueue:
                 with self._lock:
                     task.status = TaskStatus.RUNNING
                     task.started_at = datetime.now()
+                    task.current_activity = "Starting..."
+                    task.activities = []
+                    task.tools_used = []
 
                 try:
                     # Import here to avoid circular imports
-                    from app.agent import run_agent_chat_with_tier
+                    from app.agent import (
+                        run_agent_streaming,
+                        _classify_task_complexity,
+                        LLM_PROVIDER,
+                    )
 
-                    response, model_tier = run_agent_chat_with_tier(task.prompt)
+                    # Get model tier for display
+                    model_tier = _classify_task_complexity(task.prompt)
+
+                    with self._lock:
+                        task.model_tier = model_tier
+                        task.current_activity = f"Using {LLM_PROVIDER}/{model_tier}..."
+                        task.activities.append(f"Using {LLM_PROVIDER}/{model_tier}")
+
+                    final_content = ""
+
+                    # Use streaming to track progress
+                    for event in run_agent_streaming(task.prompt, model_tier):
+                        event_type = event.get("event", "")
+                        detail = event.get("detail", "")
+
+                        with self._lock:
+                            if event_type == "tool_started":
+                                task.current_activity = detail
+                                task.activities.append(detail)
+                                tool_name = event.get("tool", "")
+                                if tool_name:
+                                    task.tools_used.append(tool_name)
+
+                            elif event_type == "tool_completed":
+                                # Keep the activity but update status
+                                pass
+
+                            elif event_type == "content":
+                                task.current_activity = "Generating response..."
+
+                            elif event_type == "completed":
+                                final_content = event.get("content", "")
 
                     with self._lock:
                         task.status = TaskStatus.COMPLETED
-                        task.result = response
-                        task.model_tier = model_tier
+                        task.result = final_content
                         task.completed_at = datetime.now()
+                        task.current_activity = f"Done ({len(task.tools_used)} tools)"
+                        task.activities.append(
+                            f"Completed - {len(task.tools_used)} tools used"
+                        )
 
                 except Exception as e:
                     with self._lock:
                         task.status = TaskStatus.FAILED
                         task.error = str(e)
                         task.completed_at = datetime.now()
+                        task.current_activity = f"Error: {str(e)[:50]}"
 
                 self._task_queue.task_done()
 

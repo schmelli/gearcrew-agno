@@ -37,3 +37,16 @@ prompts/.materialized/
 
 # User settings (local preferences)
 .gearcrew_settings.json
+
+# Firebase service account (sensitive)
+firebase-service-account.json
+
+# Sync tokens (local state)
+.geargraph_sync_token
+
+# Export examples (local data)
+gearbase_export_example.json
+
+# Analysis and scripts (dev only)
+analysis/
+scripts/

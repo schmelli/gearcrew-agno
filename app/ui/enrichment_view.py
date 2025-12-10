@@ -29,6 +29,116 @@ def run_enrichment_batch(category: str = None):
     st.session_state.enrichment_results = results
 
 
+def _run_single_with_progress(agent, batch_category: str):
+    """Run single item enrichment with detailed progress display."""
+    cat_filter = None if batch_category == "All Categories" else batch_category
+    items = get_items_needing_enrichment(limit=1, category=cat_filter)
+
+    if not items:
+        st.info("No items to enrich in this category")
+        return
+
+    item = items[0]
+    name = item.get("name", "Unknown")
+    brand = item.get("brand", "Unknown")
+
+    # Create progress display
+    progress_container = st.container()
+    status_placeholder = progress_container.empty()
+    log_expander = progress_container.expander("Activity Log", expanded=True)
+    log_placeholder = log_expander.empty()
+
+    activities = []
+
+    # Show what we're doing
+    status_placeholder.info(f"**Enriching: {brand} {name}**")
+    activities.append(f"Starting enrichment for {brand} {name}")
+    log_placeholder.markdown("\n".join([f"• {a}" for a in activities]))
+
+    # Build search query
+    activities.append(f"Building search query...")
+    log_placeholder.markdown("\n".join([f"• {a}" for a in activities]))
+
+    query = agent._build_search_query(name, brand, item.get("category"))
+    activities.append(f"Searching web: '{query[:50]}...'")
+    status_placeholder.info(f"**Searching web for {brand} {name}...**")
+    log_placeholder.markdown("\n".join([f"• {a}" for a in activities]))
+
+    # Run the enrichment
+    result = agent.enrich_single_item(item)
+
+    if result.success:
+        activities.append(f"Found data from: {result.search_url or 'web search'}")
+        activities.append(f"**Added fields: {', '.join(result.fields_added)}**")
+        status_placeholder.success(f"**Success!** Added: {', '.join(result.fields_added)}")
+    else:
+        activities.append(f"No new data found: {result.error}")
+        status_placeholder.warning(f"No new data: {result.error or 'Fields already complete'}")
+
+    log_placeholder.markdown("\n".join([f"• {a}" for a in activities]))
+
+    # Store result
+    st.session_state.enrichment_results.append(result)
+
+
+def _run_batch_with_progress(agent, batch_category: str):
+    """Run batch enrichment with detailed per-item progress display."""
+    cat_filter = None if batch_category == "All Categories" else batch_category
+    items = get_items_needing_enrichment(limit=10, category=cat_filter, max_score=0.5)
+
+    if not items:
+        st.info("No items needing enrichment in this category")
+        return
+
+    # Create progress display
+    st.markdown(f"### Processing {len(items)} items")
+    overall_progress = st.progress(0, text="Starting batch...")
+    status_placeholder = st.empty()
+    log_expander = st.expander("Activity Log", expanded=True)
+    log_placeholder = log_expander.empty()
+
+    activities = []
+    results = []
+
+    for i, item in enumerate(items):
+        name = item.get("name", "Unknown")
+        brand = item.get("brand", "Unknown")
+
+        # Update progress
+        progress_pct = (i / len(items))
+        overall_progress.progress(progress_pct, text=f"Item {i+1}/{len(items)}")
+        status_placeholder.info(f"**Enriching: {brand} {name}**")
+
+        activities.append(f"[{i+1}/{len(items)}] Searching for {brand} {name}...")
+        log_placeholder.markdown("\n".join([f"• {a}" for a in activities[-15:]]))
+
+        # Run enrichment
+        result = agent.enrich_single_item(item)
+        results.append(result)
+
+        if result.success:
+            activities.append(
+                f"  ✅ Added: {', '.join(result.fields_added)}"
+            )
+        else:
+            activities.append(f"  ⚠️ {result.error or 'No new data'}")
+
+        log_placeholder.markdown("\n".join([f"• {a}" for a in activities[-15:]]))
+
+    # Final status
+    overall_progress.progress(1.0, text="Batch complete!")
+    success_count = sum(1 for r in results if r.success)
+    status_placeholder.success(
+        f"**Batch complete!** {success_count}/{len(results)} items enriched"
+    )
+
+    activities.append(f"**Completed: {success_count}/{len(results)} items enriched**")
+    log_placeholder.markdown("\n".join([f"• {a}" for a in activities[-15:]]))
+
+    # Store results
+    st.session_state.enrichment_results = results
+
+
 def render_enrichment_stats():
     """Render data completeness statistics."""
     stats = get_enrichment_stats()
@@ -171,26 +281,12 @@ def render_enrichment_controls():
                 st.rerun()
         else:
             if st.button("Run Batch (10 items)", type="primary"):
-                with st.spinner("Running enrichment batch..."):
-                    run_enrichment_batch(batch_category)
-                st.rerun()
+                _run_batch_with_progress(agent, batch_category)
 
     with col2:
         if status["status"] != "running":
             if st.button("Run Single Item"):
-                items = get_items_needing_enrichment(
-                    limit=1,
-                    category=batch_category if batch_category != "All Categories" else None,
-                )
-                if items:
-                    with st.spinner(f"Enriching {items[0].get('name')}..."):
-                        result = agent.enrich_single_item(items[0])
-                        if result.success:
-                            st.success(f"Added: {', '.join(result.fields_added)}")
-                        else:
-                            st.warning(result.error or "No new data found")
-                else:
-                    st.info("No items to enrich")
+                _run_single_with_progress(agent, batch_category)
 
 
 def render_recent_results():

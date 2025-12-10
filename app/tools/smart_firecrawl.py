@@ -138,16 +138,9 @@ class SelfHostedFirecrawl:
             raise ValueError(data.get("error", "Map failed"))
         return data
 
-    def extract(self, urls: list[str], schema: dict, prompt: str = "") -> dict:
-        """Extract structured data using v1 API."""
-        endpoint = f"{self.api_url}/v1/extract"
-        payload = {"urls": urls, "schema": schema}
-        if prompt:
-            payload["prompt"] = prompt
-
-        response = httpx.post(endpoint, headers=self._headers(), json=payload, timeout=self.timeout)
-        response.raise_for_status()
-        return response.json()
+    # NOTE: extract() is NOT supported by self-hosted Firecrawl v1
+    # The /v1/extract endpoint doesn't exist on self-hosted instances
+    # Use SmartFirecrawlClient.extract() which goes directly to cloud
 
 
 class SmartFirecrawlClient:
@@ -303,20 +296,13 @@ class SmartFirecrawlClient:
         raise ValueError("No Firecrawl client available for map")
 
     def extract(self, urls: list[str], schema: dict, prompt: str = "") -> Any:
-        """Extract structured data with automatic fallback."""
-        if self._self_hosted:
-            for attempt in range(self.config.max_retries + 1):
-                try:
-                    logger.info(f"[Firecrawl] Self-hosted extract: {urls}")
-                    result = self._self_hosted.extract(urls, schema, prompt)
-                    self.stats.self_hosted_calls += 1
-                    return result
-                except Exception as e:
-                    logger.warning(f"[Firecrawl] Self-hosted extract failed: {e}")
-                    if attempt < self.config.max_retries:
-                        time.sleep((attempt + 1) * 1.0)
+        """Extract structured data - cloud only, with scrape+parse fallback.
 
-        if self._cloud_client and self.config.enable_fallback:
+        Note: Self-hosted Firecrawl doesn't support /extract endpoint.
+        Falls back to scraping + manual parsing if cloud is unavailable/out of credits.
+        """
+        # Try cloud Firecrawl first (self-hosted doesn't support extract)
+        if self._cloud_client:
             try:
                 logger.info(f"[Firecrawl] 💰 Cloud extract: {urls}")
                 result = self._cloud_client.extract(urls=urls, schema=schema, prompt=prompt)
@@ -324,9 +310,47 @@ class SmartFirecrawlClient:
                 self.stats.total_credits += len(urls) * 5
                 return result
             except Exception as e:
-                raise ValueError(f"Extract failed: {e}")
+                error_str = str(e).lower()
+                if "credit" in error_str or "limit" in error_str or "429" in error_str:
+                    logger.warning(f"[Firecrawl] Cloud extract out of credits: {e}")
+                else:
+                    logger.warning(f"[Firecrawl] Cloud extract failed: {e}")
+                # Fall through to scrape fallback
 
-        raise ValueError("No Firecrawl client available for extract")
+        # Fallback: scrape the page and return raw content for manual parsing
+        logger.info(f"[Firecrawl] Using scrape fallback for extract: {urls}")
+        fallback_results = []
+
+        for url in urls:
+            try:
+                scrape_result = self.scrape_url(url, formats=["markdown"])
+                if scrape_result.success:
+                    fallback_results.append({
+                        "url": url,
+                        "markdown": scrape_result.markdown,
+                        "metadata": scrape_result.metadata,
+                        "source": "scrape_fallback",
+                    })
+                else:
+                    fallback_results.append({
+                        "url": url,
+                        "error": scrape_result.error,
+                        "source": "scrape_fallback",
+                    })
+            except Exception as e:
+                fallback_results.append({
+                    "url": url,
+                    "error": str(e),
+                    "source": "scrape_fallback",
+                })
+
+        # Return in a format similar to extract API
+        return {
+            "success": True,
+            "data": fallback_results,
+            "source": "scrape_fallback",
+            "note": "Cloud extract unavailable, using scrape fallback - manual parsing required",
+        }
 
     def get_usage_stats(self) -> dict:
         """Get usage statistics."""

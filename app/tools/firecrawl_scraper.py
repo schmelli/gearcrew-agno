@@ -6,14 +6,132 @@ the API for structured data extraction with schemas.
 Uses SmartFirecrawlClient for automatic self-hosted → cloud fallback.
 These are typically used as fallback when Playwright doesn't work,
 or for advanced extraction requiring LLM-based schema parsing.
+
+When cloud Firecrawl extract is unavailable (out of credits), falls back to:
+1. Scraping the page with self-hosted Firecrawl
+2. Parsing the markdown manually to extract product data
 """
 
+import logging
+import re
+from typing import Optional
+
 from app.tools.smart_firecrawl import get_smart_firecrawl
+
+logger = logging.getLogger(__name__)
 
 
 def _get_firecrawl_client():
     """Get SmartFirecrawl client instance with self-hosted + cloud fallback."""
     return get_smart_firecrawl()
+
+
+def _parse_product_from_markdown(markdown: str, url: str = "") -> dict:
+    """Parse product data from markdown content (fallback when extract unavailable).
+
+    This is a best-effort extraction using regex patterns for common product page formats.
+    """
+    result = {
+        "source": "markdown_fallback",
+        "source_url": url,
+    }
+
+    # Extract product name from title (usually first # heading)
+    title_match = re.search(r'^#\s+(.+?)(?:\n|$)', markdown, re.MULTILINE)
+    if title_match:
+        result["product_name"] = title_match.group(1).strip()
+
+    # Try to extract price
+    price_patterns = [
+        r'\$(\d+(?:\.\d{2})?)',
+        r'(?:Price|MSRP|Cost):\s*\$?(\d+(?:\.\d{2})?)',
+    ]
+    for pattern in price_patterns:
+        match = re.search(pattern, markdown, re.IGNORECASE)
+        if match:
+            try:
+                result["price"] = float(match.group(1))
+                break
+            except ValueError:
+                pass
+
+    # Extract weight (grams or oz)
+    weight_patterns = [
+        (r'(\d+(?:\.\d+)?)\s*(?:g|grams?)\b', 'g'),
+        (r'(\d+(?:\.\d+)?)\s*(?:oz|ounces?)\b', 'oz'),
+        (r'Weight:\s*(\d+(?:\.\d+)?)\s*(?:g|grams?)', 'g'),
+        (r'Weight:\s*(\d+(?:\.\d+)?)\s*(?:oz|ounces?)', 'oz'),
+    ]
+    for pattern, unit in weight_patterns:
+        match = re.search(pattern, markdown, re.IGNORECASE)
+        if match:
+            try:
+                value = float(match.group(1))
+                if unit == 'g':
+                    result["weight_grams"] = int(value)
+                else:
+                    result["weight_oz"] = value
+                    result["weight_grams"] = int(value * 28.35)
+                break
+            except ValueError:
+                pass
+
+    # Extract volume (liters) for backpacks
+    volume_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:L|liters?|litres?)\b', markdown, re.IGNORECASE)
+    if volume_match:
+        try:
+            result["volume_liters"] = float(volume_match.group(1))
+        except ValueError:
+            pass
+
+    # Extract R-value for sleeping pads
+    rvalue_match = re.search(r'R[- ]?[Vv]alue:?\s*(\d+(?:\.\d+)?)', markdown)
+    if rvalue_match:
+        try:
+            result["r_value"] = float(rvalue_match.group(1))
+        except ValueError:
+            pass
+
+    # Extract temperature rating
+    temp_match = re.search(r'(-?\d+)\s*°?\s*F\b', markdown)
+    if temp_match:
+        try:
+            result["temp_rating_f"] = int(temp_match.group(1))
+        except ValueError:
+            pass
+
+    # Extract description (first paragraph after title)
+    desc_match = re.search(r'^#.+?\n\n(.+?)(?:\n\n|\n#)', markdown, re.MULTILINE | re.DOTALL)
+    if desc_match:
+        desc = desc_match.group(1).strip()
+        if len(desc) > 20 and len(desc) < 1000:
+            result["description"] = desc
+
+    return result
+
+
+def _parse_products_list_from_markdown(markdown: str, url: str = "") -> list[dict]:
+    """Parse multiple products from a gear guide/list markdown.
+
+    Looks for patterns like:
+    - ## Product Name
+    - **Product Name** - description
+    - 1. Product Name
+    """
+    products = []
+
+    # Split by headings or numbered lists
+    sections = re.split(r'(?:^#{1,3}\s+|\n\d+\.\s+|\n\*\*)', markdown, flags=re.MULTILINE)
+
+    for section in sections[1:]:  # Skip first empty section
+        if len(section) < 20:
+            continue
+
+        product = _parse_product_from_markdown(section, url)
+        if product.get("product_name"):
+            products.append(product)
+
+    return products
 
 
 def extract_multiple_products(url: str) -> dict:
@@ -157,12 +275,31 @@ For EACH product, capture as much detail as possible:
 Be thorough - extract EVERY product mentioned, even if some details are missing."""
         )
 
-        # Handle response
+        # Check if we got a scrape fallback response
+        if isinstance(result, dict) and result.get("source") == "scrape_fallback":
+            logger.info(f"[Extract] Using scrape fallback for {url}")
+            fallback_data = result.get("data", [])
+            if fallback_data and isinstance(fallback_data, list):
+                # Parse products from markdown
+                markdown = fallback_data[0].get("markdown", "")
+                if markdown:
+                    products = _parse_products_list_from_markdown(markdown, url)
+                    return {
+                        "products": products,
+                        "total_products": len(products),
+                        "source": "scrape_fallback",
+                    }
+            return {"products": [], "total_products": 0, "source": "scrape_fallback"}
+
+        # Handle normal cloud extract response
         if hasattr(result, 'data') and result.data:
             data = result.data[0] if isinstance(result.data, list) else result.data
             return data
         elif isinstance(result, dict):
-            return result.get('data', result)
+            data = result.get('data', result)
+            if isinstance(data, list) and data:
+                return data[0]
+            return data
         elif isinstance(result, list) and result:
             return result[0]
 
@@ -253,11 +390,24 @@ def extract_product_data(url: str, schema: dict = None) -> dict:
             prompt="Extract product information for outdoor/hiking/backpacking gear."
         )
 
-        # Handle response
+        # Check if we got a scrape fallback response
+        if isinstance(result, dict) and result.get("source") == "scrape_fallback":
+            logger.info(f"[Extract] Using scrape fallback for single product: {url}")
+            fallback_data = result.get("data", [])
+            if fallback_data and isinstance(fallback_data, list):
+                markdown = fallback_data[0].get("markdown", "")
+                if markdown:
+                    return _parse_product_from_markdown(markdown, url)
+            return {"source": "scrape_fallback", "source_url": url}
+
+        # Handle normal cloud extract response
         if hasattr(result, 'data') and result.data:
             return result.data[0] if isinstance(result.data, list) else result.data
         elif isinstance(result, dict):
-            return result.get('data', result)
+            data = result.get('data', result)
+            if isinstance(data, list) and data:
+                return data[0]
+            return data
         elif isinstance(result, list) and result:
             return result[0]
 

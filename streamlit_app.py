@@ -99,7 +99,7 @@ def render_youtube_preview(url: str):
 
 
 def render_task_status_sidebar():
-    """Render the task queue status in the sidebar."""
+    """Render the task queue status in the sidebar with detailed progress."""
     task_queue = get_task_queue()
     active_tasks = task_queue.get_active_tasks()
     recent_completed = task_queue.get_recent_completed(limit=3)
@@ -107,7 +107,7 @@ def render_task_status_sidebar():
     if active_tasks or recent_completed:
         st.markdown("### Active Tasks")
 
-        # Show active tasks
+        # Show active tasks with detailed progress
         for task in active_tasks:
             status_icon = "⏳" if task.status == TaskStatus.PENDING else "🔄"
             duration = ""
@@ -116,15 +116,27 @@ def render_task_status_sidebar():
 
             with st.container():
                 st.markdown(f"{status_icon} **{task.description}**{duration}")
+
                 if task.status == TaskStatus.RUNNING:
-                    st.progress(0.5, text="Processing...")
+                    # Show current activity
+                    current = task.current_activity or "Processing..."
+                    st.info(f"**{current}**")
+
+                    # Show activity log in expander
+                    if task.activities:
+                        with st.expander("Activity Log", expanded=False):
+                            for activity in task.activities[-10:]:
+                                st.caption(f"• {activity}")
 
         # Show recent completed
         if recent_completed:
             with st.expander("Recent Tasks", expanded=False):
                 for task in recent_completed:
                     if task.status == TaskStatus.COMPLETED:
-                        st.markdown(f"✅ {task.description}")
+                        tools_info = ""
+                        if task.tools_used:
+                            tools_info = f" ({len(task.tools_used)} tools)"
+                        st.markdown(f"✅ {task.description}{tools_info}")
                     else:
                         st.markdown(f"❌ {task.description}")
                         if task.error:
@@ -263,7 +275,7 @@ elif st.session_state.view_mode == "Agent Chat":
                 st.caption(f"{model_icons.get(model_tier, '')} {model_names.get(model_tier, '')}")
             st.markdown(message["content"])
 
-    # Show pending message for active tasks
+    # Show pending message for active tasks with detailed progress
     task_queue = get_task_queue()
     active_tasks = task_queue.get_active_tasks()
     for task in active_tasks:
@@ -273,9 +285,21 @@ elif st.session_state.view_mode == "Agent Chat":
             # The user message was already added when submitted
 
         with st.chat_message("assistant"):
-            status = "🔄 Processing..." if task.status == TaskStatus.RUNNING else "⏳ Queued..."
-            duration = f" ({int(task.duration_seconds)}s)" if task.duration_seconds else ""
-            st.info(f"{status}{duration}\n\n*You can switch views - this will continue in the background.*")
+            if task.status == TaskStatus.RUNNING:
+                duration = f" ({int(task.duration_seconds)}s)" if task.duration_seconds else ""
+                current = task.current_activity or "Processing..."
+
+                st.info(f"🔄 **{current}**{duration}")
+
+                # Show activity log
+                if task.activities:
+                    with st.expander("Activity Log", expanded=True):
+                        for activity in task.activities:
+                            st.markdown(f"• {activity}")
+
+                st.caption("*You can switch views - this will continue in the background.*")
+            else:
+                st.info("⏳ Queued...")
 
     # Chat input
     if prompt := st.chat_input("Ask about gear or paste a URL to analyze..."):

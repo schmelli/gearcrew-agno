@@ -1,9 +1,10 @@
 """GearCrew Agent - Extracts hiking/backpacking gear information from web sources.
 
-Uses tiered Claude models for different task complexities:
-- Haiku 4.5: Fast, simple tasks (quick lookups, simple questions)
-- Sonnet 4.5: Standard tasks (extraction, analysis, most interactions)
-- Opus 4.5 + Thinking: Complex tasks (verification, conflict resolution, deep analysis)
+Supports multiple LLM providers for cost optimization:
+- DeepSeek (default): Very cost-effective, good for extraction tasks
+- Claude: Higher quality but more expensive (Haiku/Sonnet/Opus tiers)
+
+Set LLM_PROVIDER env var to switch: "deepseek" (default) or "anthropic"
 """
 
 import os
@@ -11,9 +12,11 @@ import re
 from typing import Optional, Literal
 
 import langwatch
-from agno.agent import Agent
+from agno.agent import Agent, RunEvent
 from agno.models.anthropic import Claude
+from agno.models.deepseek import DeepSeek
 from dotenv import load_dotenv
+from typing import Iterator, Callable
 
 from app.models.gear import ExtractionResult, GearItem, KnowledgeFact, Manufacturer
 from app.tools.youtube import (
@@ -59,7 +62,28 @@ load_dotenv()
 
 # Model tier definitions
 ModelTier = Literal["haiku", "sonnet", "opus"]
+LLMProvider = Literal["deepseek", "anthropic"]
 
+# Get configured provider (default to deepseek for cost savings)
+LLM_PROVIDER: LLMProvider = os.getenv("LLM_PROVIDER", "deepseek").lower()  # type: ignore
+
+# DeepSeek models (very cost-effective: ~$0.14/M input, $0.28/M output)
+DEEPSEEK_MODELS = {
+    "haiku": DeepSeek(
+        id="deepseek-chat",
+        max_tokens=4096,
+    ),
+    "sonnet": DeepSeek(
+        id="deepseek-chat",
+        max_tokens=8192,
+    ),
+    "opus": DeepSeek(
+        id="deepseek-reasoner",  # DeepSeek R1 for complex reasoning
+        max_tokens=16384,
+    ),
+}
+
+# Claude models (higher quality but more expensive)
 CLAUDE_MODELS = {
     "haiku": Claude(
         id="claude-haiku-4-5-20251001",
@@ -75,6 +99,14 @@ CLAUDE_MODELS = {
         thinking={"type": "enabled", "budget_tokens": 10000},
     ),
 }
+
+
+def _get_model(tier: ModelTier):
+    """Get the appropriate model based on configured provider and tier."""
+    if LLM_PROVIDER == "anthropic":
+        return CLAUDE_MODELS[tier]
+    else:
+        return DEEPSEEK_MODELS[tier]
 
 
 def _get_system_prompt() -> str:
@@ -685,16 +717,18 @@ def create_gear_agent(model_tier: ModelTier = "sonnet") -> Agent:
     """Create and configure a gear extraction agent with specified model tier.
 
     Args:
-        model_tier: Which Claude model to use ('haiku', 'sonnet', 'opus')
+        model_tier: Which model tier to use ('haiku', 'sonnet', 'opus')
+            - With DeepSeek: haiku/sonnet use deepseek-chat, opus uses deepseek-reasoner
+            - With Anthropic: uses respective Claude models
 
     Returns:
         Configured Agno Agent instance
     """
     system_prompt = _get_system_prompt()
-    model = CLAUDE_MODELS[model_tier]
+    model = _get_model(model_tier)
 
     agent = Agent(
-        name=f"GearCrew-{model_tier.capitalize()}",
+        name=f"GearCrew-{LLM_PROVIDER.capitalize()}-{model_tier.capitalize()}",
         model=model,
         instructions=system_prompt,
         tools=AGENT_TOOLS,
@@ -856,3 +890,214 @@ def run_agent_chat_with_tier(message: str) -> tuple[str, ModelTier]:
     model_tier = _classify_task_complexity(message)
     response = run_agent_chat(message, model_tier)
     return response, model_tier
+
+
+# Human-readable tool name mapping
+TOOL_DISPLAY_NAMES = {
+    "get_youtube_transcript": "Fetching YouTube transcript",
+    "scrape_webpage": "Scraping webpage content",
+    "search_web": "Searching the web",
+    "map_website": "Mapping website structure",
+    "discover_catalog": "Discovering product catalog",
+    "quick_count_products": "Counting products on page",
+    "extract_product_data": "Extracting product data",
+    "extract_multiple_products": "Extracting multiple products",
+    "batch_extract_products": "Batch extracting products",
+    "find_similar_gear": "Checking for duplicates",
+    "check_gear_exists": "Checking if gear exists",
+    "save_gear_to_graph": "Saving gear to database",
+    "save_insight_to_graph": "Saving insight to database",
+    "search_graph": "Searching gear database",
+    "check_video_already_processed": "Checking if already processed",
+    "save_extraction_result": "Saving extraction result",
+    "link_extracted_gear_to_source": "Linking gear to source",
+    "merge_duplicate_gear": "Merging duplicate entries",
+    "update_existing_gear": "Updating existing gear",
+    "verify_brand_product": "Verifying brand name",
+    "research_product": "Researching product online",
+    "search_product_weights": "Searching for weight data",
+    "search_images": "Searching for images",
+    "save_glossary_term": "Saving glossary term",
+    "lookup_glossary_term": "Looking up glossary term",
+}
+
+
+def _get_tool_display_name(tool_name: str) -> str:
+    """Get human-readable display name for a tool."""
+    return TOOL_DISPLAY_NAMES.get(tool_name, f"Running {tool_name}")
+
+
+def extract_gear_streaming(
+    source_url: str,
+    user_context: str = "",
+    video_title: str = "",
+    on_progress: Callable[[str, str], None] | None = None,
+) -> Iterator[dict]:
+    """Extract gear with streaming progress updates.
+
+    Yields progress events that can be displayed in the UI.
+
+    Args:
+        source_url: URL to extract gear from
+        user_context: Additional context from user
+        video_title: Title of the video
+        on_progress: Optional callback for progress updates (status, detail)
+
+    Yields:
+        Dict with event info: {"event": str, "detail": str, "content": str | None}
+    """
+    agent = get_agent("sonnet")
+
+    context_section = ""
+    if user_context:
+        context_section = f"""
+## Important Context from User:
+{user_context}
+
+Please keep this context in mind during extraction.
+"""
+
+    title_section = ""
+    if video_title:
+        title_section = f"Video Title: {video_title}\n"
+
+    prompt = f"""Please analyze the following source and extract all hiking/backpacking gear information:
+
+{title_section}Source URL: {source_url}
+{context_section}
+Instructions:
+1. First, fetch the content from this URL using the appropriate tool (YouTube transcript or webpage scraper)
+2. Extract all gear items mentioned with their specifications
+3. Identify any manufacturers and their details
+4. Extract valuable knowledge facts, tips, and reviews
+5. IMPORTANT: Check for duplicates using find_similar_gear before saving any new gear
+6. Save all extracted gear items and insights to the database
+7. Link each gear item to this source using link_extracted_gear_to_source
+8. **CRITICAL - MUST DO**: Call save_extraction_result at the end with:
+   - url: "{source_url}"
+   - title: The video/page title
+   - channel: The channel or author name
+   - gear_items_found: Count of gear items extracted
+   - insights_found: Count of insights extracted
+   - extraction_summary: A markdown summary of what was found
+
+This final step is REQUIRED - without it, the video won't appear in the archive!
+
+Please proceed with the extraction."""
+
+    yield {"event": "started", "detail": "Starting extraction...", "content": None}
+
+    final_content = ""
+    tools_called = []
+
+    # Run with streaming events
+    for event in agent.run(prompt, stream=True, stream_events=True):
+        if hasattr(event, "event"):
+            if event.event == RunEvent.tool_call_started:
+                tool_name = getattr(event, "tool_name", None) or getattr(
+                    getattr(event, "tool", None), "name", "unknown"
+                )
+                display_name = _get_tool_display_name(tool_name)
+                tools_called.append(tool_name)
+                yield {
+                    "event": "tool_started",
+                    "detail": display_name,
+                    "tool": tool_name,
+                    "content": None,
+                }
+                if on_progress:
+                    on_progress("tool", display_name)
+
+            elif event.event == RunEvent.tool_call_completed:
+                tool_name = getattr(event, "tool_name", None) or getattr(
+                    getattr(event, "tool", None), "name", "unknown"
+                )
+                display_name = _get_tool_display_name(tool_name)
+                yield {
+                    "event": "tool_completed",
+                    "detail": f"{display_name} - done",
+                    "tool": tool_name,
+                    "content": None,
+                }
+
+            elif event.event == RunEvent.run_content:
+                content = getattr(event, "content", "")
+                if content:
+                    final_content += str(content)
+                    yield {
+                        "event": "content",
+                        "detail": "Generating response...",
+                        "content": str(content),
+                    }
+
+            elif event.event == RunEvent.reasoning_step:
+                step = getattr(event, "content", "")
+                if step:
+                    yield {
+                        "event": "reasoning",
+                        "detail": "Thinking...",
+                        "content": str(step),
+                    }
+
+        elif hasattr(event, "content") and event.content:
+            final_content = str(event.content)
+
+    yield {
+        "event": "completed",
+        "detail": f"Extraction complete ({len(tools_called)} tools used)",
+        "content": final_content,
+        "tools_used": tools_called,
+    }
+
+
+def run_agent_streaming(
+    message: str,
+    model_tier: ModelTier | None = None,
+    on_progress: Callable[[str, str], None] | None = None,
+) -> Iterator[dict]:
+    """Run agent with streaming progress updates.
+
+    Args:
+        message: User message to process
+        model_tier: Optional model tier override
+        on_progress: Optional callback for progress updates
+
+    Yields:
+        Dict with event info
+    """
+    if model_tier is None:
+        model_tier = _classify_task_complexity(message)
+
+    agent = get_agent(model_tier)
+
+    yield {"event": "started", "detail": f"Using {LLM_PROVIDER}/{model_tier}..."}
+
+    final_content = ""
+
+    for event in agent.run(message, stream=True, stream_events=True):
+        if hasattr(event, "event"):
+            if event.event == RunEvent.tool_call_started:
+                tool_name = getattr(event, "tool_name", None) or getattr(
+                    getattr(event, "tool", None), "name", "unknown"
+                )
+                display_name = _get_tool_display_name(tool_name)
+                yield {"event": "tool_started", "detail": display_name, "tool": tool_name}
+                if on_progress:
+                    on_progress("tool", display_name)
+
+            elif event.event == RunEvent.tool_call_completed:
+                tool_name = getattr(event, "tool_name", None) or getattr(
+                    getattr(event, "tool", None), "name", "unknown"
+                )
+                yield {"event": "tool_completed", "detail": f"Done: {tool_name}"}
+
+            elif event.event == RunEvent.run_content:
+                content = getattr(event, "content", "")
+                if content:
+                    final_content += str(content)
+                    yield {"event": "content", "detail": "...", "content": str(content)}
+
+        elif hasattr(event, "content") and event.content:
+            final_content = str(event.content)
+
+    yield {"event": "completed", "detail": "Done", "content": final_content}

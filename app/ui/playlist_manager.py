@@ -15,7 +15,7 @@ from typing import Optional
 
 from app.tools.youtube import get_playlist_videos, get_playlist_info
 from app.db.memgraph import check_source_exists, get_gear_from_source
-from app.agent import extract_gear_with_context
+from app.agent import extract_gear_with_context, extract_gear_streaming
 
 # Settings file for persisting user preferences
 SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "..", "..", ".gearcrew_settings.json")
@@ -247,7 +247,7 @@ def render_processed_video(video: dict):
 
 
 def process_video(video: dict):
-    """Process a single video and show results."""
+    """Process a single video with real-time progress updates."""
     import logging
     logger = logging.getLogger(__name__)
 
@@ -264,32 +264,78 @@ def process_video(video: dict):
     result_key = f"process_result_{video_id}"
 
     try:
-        with st.spinner(f"Processing: {title}..."):
-            logger.info(f"Starting extraction for: {title} ({url})")
+        st.markdown(f"### Processing: {title}")
 
-            result = extract_gear_with_context(
-                source_url=url,
-                user_context=combined_context,
-                video_title=title,
-            )
+        # Create progress display containers
+        progress_container = st.container()
+        status_placeholder = progress_container.empty()
+        activity_log = progress_container.expander("Activity Log", expanded=True)
+        log_placeholder = activity_log.empty()
 
-            logger.info(f"Extraction complete. Result length: {len(result) if result else 0}")
+        logger.info(f"Starting extraction for: {title} ({url})")
 
-            if not result:
-                st.warning(f"Extraction returned empty result for: {title}")
-                result = "No content extracted from this video."
+        # Track activities for the log
+        activities = []
+        final_result = ""
 
-            # Update video status
-            for v in st.session_state.playlist_videos:
-                if v.get("video_id") == video_id:
-                    v["is_processed"] = True
-                    v["source_data"] = get_source_data(url)
-                    break
+        # Use streaming extraction
+        for event in extract_gear_streaming(
+            source_url=url,
+            user_context=combined_context,
+            video_title=title,
+        ):
+            event_type = event.get("event", "")
+            detail = event.get("detail", "")
 
-            # Store result in session state
-            st.session_state[result_key] = result
+            if event_type == "started":
+                status_placeholder.info(f"Starting extraction...")
+                activities.append(f"Started extraction for: {title}")
 
-            st.success(f"Successfully processed: {title}")
+            elif event_type == "tool_started":
+                status_placeholder.info(f"{detail}...")
+                activities.append(f"{detail}")
+                # Update log with all activities
+                log_placeholder.markdown("\n".join([f"- {a}" for a in activities]))
+
+            elif event_type == "tool_completed":
+                # Just update the current status, tool is done
+                pass
+
+            elif event_type == "reasoning":
+                content = event.get("content", "")
+                if content:
+                    activities.append(f"Thinking: {content[:100]}...")
+                    log_placeholder.markdown("\n".join([f"- {a}" for a in activities]))
+
+            elif event_type == "content":
+                status_placeholder.info("Generating response...")
+
+            elif event_type == "completed":
+                final_result = event.get("content", "")
+                tools_used = event.get("tools_used", [])
+                status_placeholder.success(
+                    f"Extraction complete! Used {len(tools_used)} tools."
+                )
+                activities.append(f"**Completed** - {len(tools_used)} tools used")
+                log_placeholder.markdown("\n".join([f"- {a}" for a in activities]))
+
+        logger.info(f"Extraction complete. Result length: {len(final_result) if final_result else 0}")
+
+        if not final_result:
+            st.warning(f"Extraction returned empty result for: {title}")
+            final_result = "No content extracted from this video."
+
+        # Update video status
+        for v in st.session_state.playlist_videos:
+            if v.get("video_id") == video_id:
+                v["is_processed"] = True
+                v["source_data"] = get_source_data(url)
+                break
+
+        # Store result in session state
+        st.session_state[result_key] = final_result
+
+        st.success(f"Successfully processed: {title}")
 
     except Exception as e:
         logger.error(f"Failed to process {title}: {str(e)}", exc_info=True)
