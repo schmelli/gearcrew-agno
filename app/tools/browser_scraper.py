@@ -16,16 +16,64 @@ logger = logging.getLogger(__name__)
 # E-commerce selectors (Shopify and common patterns)
 PRODUCT_SELECTORS = [
     ".product-card", ".product-item", ".product-grid-item", "[data-product-id]",
-    ".grid__item .card", ".product", ".product-tile", 'a[href*="/products/"]',
+    ".grid__item .card", ".product", ".product-tile",
+    'a[href*="/products/"]', 'a[href*="/product/"]',  # Both plural and singular
+    ".woocommerce-loop-product__link",  # WooCommerce
 ]
 PRODUCT_NAME_SELECTORS = [
     ".product-card__title", ".product-item__title", ".product__title",
     ".card__heading", ".product-title", ".product-name", "[data-product-title]",
+    ".woocommerce-loop-product__title",  # WooCommerce
+    "h2", "h3",  # Fallback headings
 ]
-PRODUCT_PRICE_SELECTORS = [".price", ".product-price", ".money", "[data-price]"]
+PRODUCT_PRICE_SELECTORS = [".price", ".product-price", ".money", "[data-price]", ".amount"]
 COLLECTION_LINK_SELECTORS = [
-    'a[href*="/collections/"]', 'a[href*="/category/"]', ".nav a", ".menu a",
+    'a[href*="/collections/"]', 'a[href*="/category/"]',
+    'a[href*="/product-category/"]',  # WooCommerce
+    ".nav a", ".menu a",
 ]
+
+# URLs to exclude from categories (non-product pages)
+NON_PRODUCT_URL_PATTERNS = [
+    "/faq", "/terms", "/privacy", "/policy", "/policies",
+    "/shipping", "/returns", "/contact", "/about",
+    "/payment", "/pricing", "/production-time",
+    "/company", "/legal", "/impressum", "/agb",
+    "/customers-outside", "/free-shipping",
+    "/cart", "/checkout", "/account", "/login", "/register",
+    "/blog", "/news", "/press",
+]
+
+# Category name patterns that indicate non-product pages
+NON_PRODUCT_CATEGORY_NAMES = [
+    "faq", "terms", "conditions", "privacy", "policy",
+    "shipping", "returns", "contact", "about us", "about",
+    "payment", "pricing", "production time", "production",
+    "company", "legal", "impressum", "agb",
+    "customers outside", "free shipping",
+    "cart", "checkout", "account", "login", "register",
+    "blog", "news", "press",
+]
+
+
+def _is_product_url(url: str) -> bool:
+    """Check if URL looks like a product page."""
+    path = urlparse(url).path.lower()
+    # Check for non-product patterns
+    for pattern in NON_PRODUCT_URL_PATTERNS:
+        if pattern in path:
+            return False
+    # Check for product patterns
+    return "/product/" in path or "/products/" in path
+
+
+def _is_non_product_category(name: str) -> bool:
+    """Check if category name indicates a non-product page."""
+    name_lower = name.lower().strip()
+    for pattern in NON_PRODUCT_CATEGORY_NAMES:
+        if pattern in name_lower or name_lower in pattern:
+            return True
+    return False
 
 
 class BrowserScraper:
@@ -215,7 +263,10 @@ class BrowserScraper:
         try:
             link = await element.query_selector("a[href]")
             href = await (link.get_attribute("href") if link else element.get_attribute("href"))
-            if not href or "/product" not in href.lower():
+            if not href:
+                return None
+            # Check if it's a product URL (handles /product/ and /products/)
+            if not _is_product_url(href):
                 return None
 
             product_url = urljoin(base_url, href)
@@ -255,8 +306,9 @@ class BrowserScraper:
         products = []
 
         try:
+            # Match both /product/ (singular) and /products/ (plural)
             links = await page.eval_on_selector_all(
-                'a[href*="/products/"], a[href*="/product/"]',
+                'a[href*="/product"]',
                 """elements => elements.map(e => ({
                     href: e.href,
                     text: e.innerText.trim(),
@@ -269,7 +321,11 @@ class BrowserScraper:
                 if not href or href in seen_urls:
                     continue
 
-                # Skip non-product links
+                # Skip non-product links using our filter
+                if not _is_product_url(href):
+                    continue
+
+                # Skip anchor/script links
                 if any(x in href.lower() for x in ["#", "javascript:", "mailto:"]):
                     continue
 
@@ -388,6 +444,7 @@ class BrowserScraper:
         """Map a website by crawling from the homepage.
 
         This discovers all collection pages and counts products.
+        Also handles non-Shopify sites that use /products/ or /product/ pages.
 
         Returns:
             dict with website structure
@@ -408,7 +465,13 @@ class BrowserScraper:
             path = urlparse(coll_url).path.lower()
             # Normalize locale prefixes
             normalized = re.sub(r'^/(en-ca|fr-ca|en-us|fr|de|es)/', '/', path)
-            if normalized not in seen_paths:
+            # Skip non-product pages
+            skip = False
+            for pattern in NON_PRODUCT_URL_PATTERNS:
+                if pattern in normalized:
+                    skip = True
+                    break
+            if not skip and normalized not in seen_paths:
                 seen_paths.add(normalized)
                 unique_collections.append(coll_url)
 
@@ -420,9 +483,13 @@ class BrowserScraper:
         for coll_url in collections_to_crawl:
             result = await self.extract_products_from_collection(coll_url)
             if result.get("products"):
+                cat_name = result.get("category_name", "Unknown")
+                # Skip non-product category names
+                if _is_non_product_category(cat_name):
+                    continue
                 categories.append({
                     "url": coll_url,
-                    "category_name": result.get("category_name", "Unknown"),
+                    "category_name": cat_name,
                     "product_count": result.get("product_count", 0),
                     "product_names": [p["name"] for p in result.get("products", [])[:10]],
                 })
@@ -430,6 +497,37 @@ class BrowserScraper:
                 for p in result.get("products", []):
                     if p.get("url"):
                         product_pages.add(p["url"])
+
+        # If no collections found, try to extract products directly from common product list URLs
+        if not categories:
+            logger.info(f"No collections found, trying direct product extraction from {url}")
+            base_url = url.rstrip("/")
+            product_list_urls = [
+                f"{base_url}/products/",
+                f"{base_url}/products",
+                f"{base_url}/shop/",
+                f"{base_url}/shop",
+                base_url,  # Try homepage itself
+            ]
+
+            for list_url in product_list_urls:
+                result = await self.extract_products_from_collection(list_url)
+                products = result.get("products", [])
+                if products:
+                    # Filter out non-product URLs
+                    filtered_products = [
+                        p for p in products if p.get("url") and _is_product_url(p["url"])
+                    ]
+                    if filtered_products:
+                        categories.append({
+                            "url": list_url,
+                            "category_name": "All Products",
+                            "product_count": len(filtered_products),
+                            "product_names": [p["name"] for p in filtered_products[:10]],
+                        })
+                        for p in filtered_products:
+                            product_pages.add(p["url"])
+                        break  # Found products, stop trying
 
         # Extract brand name from URL
         domain = urlparse(url).netloc.replace("www.", "")

@@ -11,7 +11,12 @@ from urllib.parse import urlparse
 from typing import Optional
 
 from app.task_queue import get_task_queue, TaskStatus
-from app.tools.browser_scraper import map_website_sync, extract_products_sync
+from app.tools.browser_scraper import (
+    map_website_sync,
+    extract_products_sync,
+    _is_product_url,
+    _is_non_product_category,
+)
 
 
 def is_valid_url(url: str) -> bool:
@@ -102,25 +107,38 @@ def _run_discovery(url: str):
 
             progress_bar = st.progress(0, text="Fetching product details...")
             for i, cat in enumerate(categories):
+                cat_name = cat.get("category_name", "Unknown")
+
+                # Skip non-product categories (FAQ, Terms, etc.)
+                if _is_non_product_category(cat_name):
+                    continue
+
                 progress_bar.progress(
                     (i + 1) / len(categories),
-                    text=f"Scanning {cat.get('category_name', 'category')}..."
+                    text=f"Scanning {cat_name}..."
                 )
 
                 # Get full product list for this category
                 cat_url = cat.get("url", "")
                 if cat_url:
                     products_result = extract_products_sync(cat_url)
-                    products = products_result.get("products", [])
+                    all_products = products_result.get("products", [])
+                    # Filter to only actual product URLs
+                    products = [
+                        p for p in all_products
+                        if p.get("url") and _is_product_url(p["url"])
+                    ]
                 else:
                     products = []
 
-                enhanced_categories.append({
-                    "url": cat_url,
-                    "category_name": cat.get("category_name", "Unknown"),
-                    "product_count": len(products),
-                    "products": products,  # Full product list with name, url, price
-                })
+                # Only add categories with actual products
+                if products:
+                    enhanced_categories.append({
+                        "url": cat_url,
+                        "category_name": cat_name,
+                        "product_count": len(products),
+                        "products": products,  # Full product list with name, url, price
+                    })
 
             progress_bar.empty()
 
