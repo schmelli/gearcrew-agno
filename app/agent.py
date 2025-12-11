@@ -68,6 +68,7 @@ LLMProvider = Literal["deepseek", "anthropic"]
 LLM_PROVIDER: LLMProvider = os.getenv("LLM_PROVIDER", "deepseek").lower()  # type: ignore
 
 # DeepSeek models (very cost-effective: ~$0.14/M input, $0.28/M output)
+# Note: deepseek-reasoner doesn't support tool calls, so we use deepseek-chat for all tiers
 DEEPSEEK_MODELS = {
     "haiku": DeepSeek(
         id="deepseek-chat",
@@ -78,7 +79,7 @@ DEEPSEEK_MODELS = {
         max_tokens=8192,
     ),
     "opus": DeepSeek(
-        id="deepseek-reasoner",  # DeepSeek R1 for complex reasoning
+        id="deepseek-chat",  # deepseek-reasoner doesn't support tool calls
         max_tokens=16384,
     ),
 }

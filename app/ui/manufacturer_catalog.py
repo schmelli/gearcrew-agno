@@ -202,11 +202,23 @@ def render_catalog_results():
         if st.button("Select All", key="select_all"):
             for cat in catalog["categories"]:
                 for product in cat.get("products", []):
-                    if product.get("url"):
-                        st.session_state.selected_products[product["url"]] = True
+                    product_url = product.get("url")
+                    if product_url:
+                        st.session_state.selected_products[product_url] = True
+                        # Also update the checkbox widget state
+                        checkbox_key = f"chk_{hash(product_url) % 100000}"
+                        st.session_state[checkbox_key] = True
             st.rerun()
     with col2:
         if st.button("Select None", key="select_none"):
+            # Clear all product selections and checkbox states
+            for cat in catalog["categories"]:
+                for product in cat.get("products", []):
+                    product_url = product.get("url")
+                    if product_url:
+                        checkbox_key = f"chk_{hash(product_url) % 100000}"
+                        if checkbox_key in st.session_state:
+                            st.session_state[checkbox_key] = False
             st.session_state.selected_products = {}
             st.rerun()
     with col3:
@@ -229,6 +241,13 @@ def render_catalog_results():
 
     # Extraction options
     _render_extraction_options(catalog)
+
+
+def _update_product_selection(product_url: str, checkbox_key: str):
+    """Callback to update product selection from checkbox."""
+    # Get the checkbox value from session state using its key
+    is_checked = st.session_state.get(checkbox_key, False)
+    st.session_state.selected_products[product_url] = is_checked
 
 
 def _render_category(category: dict, cat_idx: int):
@@ -266,15 +285,22 @@ def _render_category(category: dict, cat_idx: int):
     with col3:
         if st.button("Select All", key=f"select_cat_{cat_idx}"):
             for p in products:
-                if p.get("url"):
-                    st.session_state.selected_products[p["url"]] = True
+                product_url = p.get("url")
+                if product_url:
+                    st.session_state.selected_products[product_url] = True
+                    checkbox_key = f"chk_{hash(product_url) % 100000}"
+                    st.session_state[checkbox_key] = True
             st.rerun()
 
     with col4:
         if st.button("Clear", key=f"clear_cat_{cat_idx}"):
             for p in products:
-                if p.get("url"):
-                    st.session_state.selected_products[p["url"]] = False
+                product_url = p.get("url")
+                if product_url:
+                    st.session_state.selected_products[product_url] = False
+                    checkbox_key = f"chk_{hash(product_url) % 100000}"
+                    if checkbox_key in st.session_state:
+                        st.session_state[checkbox_key] = False
             st.rerun()
 
     # Show products if expanded
@@ -290,18 +316,19 @@ def _render_category(category: dict, cat_idx: int):
                 product_price = product.get("price", "")
 
                 with col:
+                    # Use URL-based key to sync with session state properly
+                    checkbox_key = f"chk_{hash(product_url) % 100000}"
                     is_selected = st.session_state.selected_products.get(product_url, False)
 
                     # Create a compact product card
                     selected = st.checkbox(
                         product_name[:50] + ("..." if len(product_name) > 50 else ""),
                         value=is_selected,
-                        key=f"prod_{cat_idx}_{p_idx}",
+                        key=checkbox_key,
                         help=f"{product_name}\n{product_price or 'No price'}\n{product_url}",
+                        on_change=_update_product_selection,
+                        args=(product_url, checkbox_key),
                     )
-
-                    if product_url:
-                        st.session_state.selected_products[product_url] = selected
 
                     if product_price:
                         st.caption(product_price)
