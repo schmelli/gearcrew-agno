@@ -50,3 +50,7 @@ gearbase_export_example.json
 # Analysis and scripts (dev only)
 analysis/
 scripts/
+
+# Data directory (except tracking files)
+data/
+!data/processed_videos.json

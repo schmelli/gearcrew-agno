@@ -485,6 +485,15 @@
        - Semantic Queries: Find gear by material, technique, or usage context
        - Batch Operations: Bulk import, categorization, merging
 
+       Automated Playlist Monitoring
+
+       - Scheduled Monitoring: Checks playlists every 6 hours via GitHub Actions
+       - Automatic Processing: New videos are automatically extracted and stored
+       - Email Notifications: Detailed reports for each processed video
+       - Progress Tracking: Maintains state to avoid reprocessing videos
+       - Manual Control: Can be triggered on-demand or run locally
+       - See: docs/PLAYLIST_MONITORING.md for setup instructions
+
        ---
        10. WORKFLOW EXAMPLES
 
