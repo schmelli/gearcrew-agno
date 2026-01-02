@@ -199,7 +199,7 @@ class PlaylistMonitor:
             if any(keyword in line.lower() for keyword in ["tent", "bag", "pack", "jacket", "shoe", "boot", "stove", "filter"]):
                 gear_items.append(line[:100])  # Limit length
 
-        return gear_items[:20]  # Limit to 20 items
+        return gear_items[:100]  # Allow up to 100 items for reporting
 
     def _extract_insights_from_result(self, result: str) -> list[str]:
         """Extract key insights from agent result.
@@ -220,7 +220,7 @@ class PlaylistMonitor:
             if any(keyword in line.lower() for keyword in ["recommends", "suggests", "tip", "advice", "important", "note"]):
                 insights.append(line[:200])  # Limit length
 
-        return insights[:10]  # Limit to 10 insights
+        return insights[:50]  # Allow up to 50 insights for reporting
 
 
 def run_monitoring(
