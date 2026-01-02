@@ -132,7 +132,7 @@ class BrowserScraper:
         """
         page = await self._new_page()
         try:
-            await page.goto(url, wait_until="networkidle")
+            await page.goto(url, wait_until="load")
             await self._wait_for_content(page)
 
             title = await page.title()
@@ -182,7 +182,7 @@ class BrowserScraper:
         """
         page = await self._new_page()
         try:
-            await page.goto(url, wait_until="networkidle")
+            await page.goto(url, wait_until="load")
             await self._wait_for_content(page)
 
             # Try to get category name from page title or h1
@@ -352,8 +352,10 @@ class BrowserScraper:
         """
         page = await self._new_page()
         try:
-            await page.goto(url, wait_until="networkidle")
-            await page.wait_for_timeout(2000)
+            # Use 'load' instead of 'networkidle' for better reliability
+            # Many modern sites never reach networkidle due to analytics/tracking
+            await page.goto(url, wait_until="load")
+            await page.wait_for_timeout(3000)  # Give extra time for JS to render
 
             base_domain = urlparse(url).netloc
             collections = set()

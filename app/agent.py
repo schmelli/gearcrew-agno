@@ -169,6 +169,9 @@ def _classify_task_complexity(message: str) -> ModelTier:
 def fetch_youtube_transcript(video_url: str) -> str:
     """Fetch transcript from a YouTube video.
 
+    Supports multiple languages including English and German.
+    Will try to get transcript in preferred languages, or fall back to any available.
+
     Args:
         video_url: YouTube video URL or ID
 
@@ -176,7 +179,8 @@ def fetch_youtube_transcript(video_url: str) -> str:
         Full transcript text
     """
     try:
-        return get_youtube_transcript(video_url)
+        # Try English and German first, then fall back to any available language
+        return get_youtube_transcript(video_url, languages=["en", "de"])
     except ValueError as e:
         return f"Error fetching transcript: {str(e)}"
 

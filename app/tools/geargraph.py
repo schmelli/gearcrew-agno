@@ -674,11 +674,34 @@ def update_existing_gear(
     price_usd: Any = None,
     category: Optional[str] = None,
     product_url: Optional[str] = None,
+    image_url: Optional[str] = None,
+    materials: Optional[str] = None,
+    source_url: Optional[str] = None,
+    description: Optional[str] = None,
+    features: Optional[str] = None,
+    # Category-specific specs
+    volume_liters: Any = None,
+    temp_rating_f: Any = None,
+    temp_rating_c: Any = None,
+    r_value: Any = None,
+    capacity_persons: Any = None,
+    packed_weight_grams: Any = None,
+    packed_size: Optional[str] = None,
+    fill_power: Any = None,
+    fill_weight_grams: Any = None,
+    waterproof_rating: Optional[str] = None,
+    lumens: Any = None,
+    burn_time: Optional[str] = None,
+    fuel_type: Optional[str] = None,
+    filter_type: Optional[str] = None,
+    flow_rate: Optional[str] = None,
 ) -> str:
     """Update an existing gear item with new information.
 
     Use this instead of creating a new entry when the item already exists
     but you have additional or corrected information.
+
+    Note: Numeric fields accept "unknown", "N/A" etc. - these will be ignored.
 
     Args:
         name: Exact name of the existing item
@@ -687,6 +710,20 @@ def update_existing_gear(
         price_usd: Updated price in USD (optional, number or "unknown" to skip)
         category: Updated category (optional)
         product_url: Updated product URL (optional)
+        image_url: Product image URL
+        materials: Comma-separated list of materials
+        source_url: URL where this info was found
+        description: Product description
+        features: Comma-separated list of key features
+
+        Category-specific (use based on gear type):
+        - Backpacks: volume_liters
+        - Sleeping bags: temp_rating_f, temp_rating_c, fill_power, fill_weight_grams
+        - Sleeping pads: r_value
+        - Tents: capacity_persons, packed_weight_grams, packed_size, waterproof_rating
+        - Headlamps: lumens, burn_time
+        - Stoves: fuel_type, burn_time
+        - Water filters: filter_type, flow_rate
 
     Returns:
         Success or error message
@@ -714,6 +751,98 @@ def update_existing_gear(
         if product_url:
             set_parts.append("g.productUrl = $url")
             params["url"] = product_url
+
+        if image_url:
+            set_parts.append("g.imageUrl = $image_url")
+            params["image_url"] = image_url
+
+        if source_url:
+            set_parts.append("g.sourceUrl = $source_url")
+            params["source_url"] = source_url
+
+        if materials:
+            materials_list = [m.strip() for m in materials.split(",")]
+            set_parts.append("g.materials = $materials")
+            params["materials"] = materials_list
+
+        if description:
+            set_parts.append("g.description = $description")
+            params["description"] = description
+
+        if features:
+            features_list = [f.strip() for f in features.split(",")]
+            set_parts.append("g.features = $features")
+            params["features"] = features_list
+
+        # Category-specific fields
+        parsed_volume = _parse_float(volume_liters)
+        if parsed_volume is not None:
+            set_parts.append("g.volumeLiters = $volume_liters")
+            params["volume_liters"] = parsed_volume
+
+        parsed_temp_f = _parse_int(temp_rating_f)
+        if parsed_temp_f is not None:
+            set_parts.append("g.tempRatingF = $temp_rating_f")
+            params["temp_rating_f"] = parsed_temp_f
+
+        parsed_temp_c = _parse_int(temp_rating_c)
+        if parsed_temp_c is not None:
+            set_parts.append("g.tempRatingC = $temp_rating_c")
+            params["temp_rating_c"] = parsed_temp_c
+
+        parsed_r_value = _parse_float(r_value)
+        if parsed_r_value is not None:
+            set_parts.append("g.rValue = $r_value")
+            params["r_value"] = parsed_r_value
+
+        parsed_capacity = _parse_int(capacity_persons)
+        if parsed_capacity is not None:
+            set_parts.append("g.capacityPersons = $capacity_persons")
+            params["capacity_persons"] = parsed_capacity
+
+        parsed_packed_weight = _parse_int(packed_weight_grams)
+        if parsed_packed_weight is not None:
+            set_parts.append("g.packedWeightGrams = $packed_weight_grams")
+            params["packed_weight_grams"] = parsed_packed_weight
+
+        if packed_size:
+            set_parts.append("g.packedSize = $packed_size")
+            params["packed_size"] = packed_size
+
+        parsed_fill_power = _parse_int(fill_power)
+        if parsed_fill_power is not None:
+            set_parts.append("g.fillPower = $fill_power")
+            params["fill_power"] = parsed_fill_power
+
+        parsed_fill_weight = _parse_int(fill_weight_grams)
+        if parsed_fill_weight is not None:
+            set_parts.append("g.fillWeightGrams = $fill_weight_grams")
+            params["fill_weight_grams"] = parsed_fill_weight
+
+        if waterproof_rating:
+            set_parts.append("g.waterproofRating = $waterproof_rating")
+            params["waterproof_rating"] = waterproof_rating
+
+        parsed_lumens = _parse_int(lumens)
+        if parsed_lumens is not None:
+            set_parts.append("g.lumens = $lumens")
+            params["lumens"] = parsed_lumens
+
+        if burn_time:
+            set_parts.append("g.burnTime = $burn_time")
+            params["burn_time"] = burn_time
+
+        if fuel_type:
+            set_parts.append("g.fuelType = $fuel_type")
+            params["fuel_type"] = fuel_type
+
+        if filter_type:
+            set_parts.append("g.filterType = $filter_type")
+            params["filter_type"] = filter_type
+
+        if flow_rate:
+            set_parts.append("g.flowRate = $flow_rate")
+            params["flow_rate"] = flow_rate
 
         if not set_parts:
             return "No updates provided"
