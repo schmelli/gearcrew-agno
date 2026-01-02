@@ -701,13 +701,17 @@ def import_lighterpack_list(url: str, auto_research: bool = True) -> str:
         output = ["## LighterPack Import Complete\n"]
         output.append(f"**Total Items:** {stats['total_items']}")
         output.append(f"**Found in Database:** {stats['found_in_db']}")
-        output.append(f"**Researched & Added:** {stats['researched']}")
+        output.append(f"**New Items Added:** {stats['added']}")
+        output.append(f"**Existing Items Updated:** {stats['updated']}")
         output.append(f"**Skipped:** {stats['skipped']}")
         output.append(f"**Errors:** {stats['errors']}")
 
         if stats['errors'] > 0:
             output.append("\n**Note:** Some items had errors during research.")
             output.append("You may want to manually check and add them.")
+
+        if stats['added'] + stats['updated'] > 0:
+            output.append(f"\n✅ Successfully processed {stats['added'] + stats['updated']} items!")
 
         return "\n".join(output)
 

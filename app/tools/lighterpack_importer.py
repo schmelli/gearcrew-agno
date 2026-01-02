@@ -7,7 +7,9 @@ from app.tools.lighterpack import parse_lighterpack_url
 from app.tools.geargraph import (
     find_similar_gear,
     save_gear_to_graph,
+    update_existing_gear,
 )
+from app.tools.web_scraper import search_web
 
 
 async def import_lighterpack(url: str, auto_research: bool = True) -> dict:
@@ -32,8 +34,8 @@ async def import_lighterpack(url: str, auto_research: bool = True) -> dict:
     stats = {
         "total_items": pack_data["total_items"],
         "found_in_db": 0,
-        "researched": 0,
         "added": 0,
+        "updated": 0,
         "skipped": 0,
         "errors": 0,
         "items_processed": [],
@@ -49,9 +51,10 @@ async def import_lighterpack(url: str, auto_research: bool = True) -> dict:
 
         if result["status"] == "found":
             stats["found_in_db"] += 1
-        elif result["status"] == "researched":
-            stats["researched"] += 1
+        elif result["status"] == "added":
             stats["added"] += 1
+        elif result["status"] == "updated":
+            stats["updated"] += 1
         elif result["status"] == "skipped":
             stats["skipped"] += 1
         elif result["status"] == "error":
@@ -59,7 +62,8 @@ async def import_lighterpack(url: str, auto_research: bool = True) -> dict:
 
     print(f"\n📊 Import Summary:")
     print(f"  ✅ Found in database: {stats['found_in_db']}")
-    print(f"  🔍 Researched & added: {stats['researched']}")
+    print(f"  ➕ New items added: {stats['added']}")
+    print(f"  🔄 Existing items updated: {stats['updated']}")
     print(f"  ⏭️  Skipped: {stats['skipped']}")
     print(f"  ❌ Errors: {stats['errors']}")
 
@@ -67,7 +71,7 @@ async def import_lighterpack(url: str, auto_research: bool = True) -> dict:
 
 
 async def _process_item(item: dict, auto_research: bool) -> dict:
-    """Process a single gear item.
+    """Process a single gear item - research and save/update.
 
     Args:
         item: Item dict from LighterPack parser
@@ -77,76 +81,208 @@ async def _process_item(item: dict, auto_research: bool) -> dict:
         Dict with processing result
     """
     name = item["name"]
+    weight_grams = item.get("weight_grams")
+
     print(f"\n📦 Processing: {name}")
+    if weight_grams:
+        print(f"   Weight from list: {weight_grams}g")
 
     # Try to extract brand and model from name
     brand, model = _extract_brand_model(name)
+    print(f"   Parsed → Brand: {brand or 'unknown'}, Model: {model or name}")
 
     # Search in database using find_similar_gear
     search_query = f"{brand} {model or name}" if brand else name
     result = find_similar_gear(name=search_query, brand=brand)
 
-    # Check if we got a match (find_similar_gear returns a formatted string)
-    if result and ("Found" in result or "match" in result.lower()):
-        print(f"  ✅ Found in DB")
-        return {
-            "item_name": name,
-            "status": "found",
-            "db_match": result[:200],
-        }
+    # Check if we got a match
+    is_existing = result and ("Found" in result or "match" in result.lower())
 
-    # Not found - research if enabled
     if not auto_research:
-        print(f"  ⏭️  Skipped (auto-research disabled)")
+        if is_existing:
+            print(f"  ✅ Found in DB (no enrichment - auto_research disabled)")
+        else:
+            print(f"  ⏭️  Skipped (auto-research disabled)")
         return {
             "item_name": name,
-            "status": "skipped",
+            "status": "skipped" if not is_existing else "found",
         }
 
-    print(f"  🔍 Not found in DB - researching...")
+    # Research the item to get detailed specs
+    print(f"  🔍 Researching specs...")
 
     try:
-        # Lazy import to avoid circular dependency
-        from app.agent import run_agent_chat
+        specs = await _research_item_specs(name, brand, model, weight_grams)
 
-        # Use agent to research the item
-        research_prompt = f"""
-Research this backpacking gear item and add it to GearGraph:
-
-Item: {name}
-Weight: {item.get('weight_grams')}g
-Category: {item.get('category', 'unknown')}
-
-Please search for this item online, find its specifications, and add it to the database
-using the save_gear_to_graph tool. Include as much detail as possible:
-brand, model, weight, price, materials, features, category, etc.
-"""
-
-        response = run_agent_chat(research_prompt)
-
-        # Check if item was added
-        if "added" in response.lower() or "success" in response.lower():
-            print(f"  ✅ Researched and added")
+        if not specs:
+            print(f"  ❌ Could not find specifications")
             return {
                 "item_name": name,
-                "status": "researched",
-                "agent_response": response[:200],
+                "status": "error",
+                "error": "No specs found",
+            }
+
+        # Save or update in database
+        if is_existing:
+            print(f"  🔄 Updating existing item with new info...")
+            result = update_existing_gear(
+                name=specs.get("model", name),
+                brand=specs.get("brand", brand or "Unknown"),
+                weight_grams=specs.get("weight_grams") or weight_grams,
+                price_usd=specs.get("price_usd"),
+                category=specs.get("category"),
+                materials=specs.get("materials"),
+                features=specs.get("features"),
+                product_url=specs.get("product_url"),
+            )
+            print(f"  ✅ Updated: {result[:100]}")
+            return {
+                "item_name": name,
+                "status": "updated",
+                "specs": specs,
             }
         else:
-            print(f"  ⚠️  Research completed but unclear if added")
+            print(f"  💾 Saving new item to database...")
+            result = save_gear_to_graph(
+                name=specs.get("model", name),
+                brand=specs.get("brand", brand or "Unknown"),
+                weight_grams=specs.get("weight_grams") or weight_grams,
+                price_usd=specs.get("price_usd"),
+                category=specs.get("category", "unknown"),
+                materials=specs.get("materials"),
+                features=specs.get("features"),
+                product_url=specs.get("product_url"),
+                source_url=specs.get("source_url"),
+            )
+            print(f"  ✅ Saved: {result[:100]}")
             return {
                 "item_name": name,
-                "status": "researched",
-                "agent_response": response[:200],
+                "status": "added",
+                "specs": specs,
             }
 
     except Exception as e:
-        print(f"  ❌ Error researching: {e}")
+        print(f"  ❌ Error: {e}")
         return {
             "item_name": name,
             "status": "error",
             "error": str(e),
         }
+
+
+async def _research_item_specs(
+    name: str,
+    brand: Optional[str],
+    model: Optional[str],
+    weight_grams: Optional[int]
+) -> Optional[dict]:
+    """Research gear item specifications online.
+
+    Args:
+        name: Full item name
+        brand: Extracted brand
+        model: Extracted model
+        weight_grams: Weight from LighterPack (if available)
+
+    Returns:
+        Dict with specs or None
+    """
+    try:
+        # Build search query
+        search_query = f"{brand} {model or name} backpacking gear specs"
+
+        # Search for product info
+        search_results = search_web(search_query, num_results=3)
+
+        if not search_results or "No results" in search_results:
+            return None
+
+        # Use agent to extract structured data from search results
+        from app.agent import run_agent_chat
+
+        extract_prompt = f"""
+Extract specifications for this gear item from the search results:
+
+Item: {name}
+Brand: {brand or 'unknown'}
+Model: {model or name}
+Weight from pack list: {weight_grams}g (if available)
+
+Search Results:
+{search_results[:2000]}
+
+Extract and return ONLY these fields in this exact format:
+- brand: [exact brand name]
+- model: [exact model/product name]
+- category: [tent/backpack/sleeping_bag/sleeping_pad/etc.]
+- weight_grams: [number only, or use {weight_grams} if not found]
+- price_usd: [number only if found]
+- materials: [comma-separated if found]
+- features: [comma-separated key features]
+- product_url: [manufacturer URL if found]
+
+Be concise and accurate. Return "NOT FOUND" if this doesn't appear to be a real product.
+"""
+
+        response = run_agent_chat(extract_prompt)
+
+        # Parse the response
+        specs = _parse_specs_response(response, brand, model, weight_grams)
+
+        return specs
+
+    except Exception as e:
+        print(f"    Research error: {e}")
+        return None
+
+
+def _parse_specs_response(
+    response: str,
+    default_brand: Optional[str],
+    default_model: Optional[str],
+    default_weight: Optional[int]
+) -> Optional[dict]:
+    """Parse agent response into structured specs.
+
+    Args:
+        response: Agent response text
+        default_brand: Fallback brand
+        default_model: Fallback model
+        default_weight: Fallback weight
+
+    Returns:
+        Specs dict or None
+    """
+    if "NOT FOUND" in response:
+        return None
+
+    specs = {
+        "brand": default_brand or "Unknown",
+        "model": default_model or "Unknown",
+        "category": "unknown",
+        "weight_grams": default_weight,
+    }
+
+    # Simple parsing - look for key: value patterns
+    lines = response.split("\n")
+    for line in lines:
+        line = line.strip()
+        if ":" in line:
+            key, value = line.split(":", 1)
+            key = key.strip().lower().replace("-", "_").replace(" ", "_")
+            value = value.strip()
+
+            if key in specs and value and value.lower() not in ["unknown", "not found", "n/a"]:
+                # Try to extract clean value
+                if key in ["weight_grams", "price_usd"]:
+                    import re
+                    match = re.search(r"(\d+\.?\d*)", value)
+                    if match:
+                        specs[key] = float(match.group(1)) if "." in match.group(1) else int(match.group(1))
+                else:
+                    specs[key] = value
+
+    return specs if specs.get("brand") != "Unknown" else None
 
 
 def _extract_brand_model(name: str) -> tuple[Optional[str], Optional[str]]:
@@ -155,7 +291,7 @@ def _extract_brand_model(name: str) -> tuple[Optional[str], Optional[str]]:
     Common patterns:
     - "Zpacks Nero 38L" -> brand: Zpacks, model: Nero 38L
     - "ThermaRest NeoAir XLite" -> brand: ThermaRest, model: NeoAir XLite
-    - "GramXpert 200 Apex" -> brand: GramXpert, model: 200 Apex
+    - "1x Nordisk V-Peg" -> brand: Nordisk, model: V-Peg (skip quantity prefix)
 
     Args:
         name: Full item name
@@ -163,28 +299,35 @@ def _extract_brand_model(name: str) -> tuple[Optional[str], Optional[str]]:
     Returns:
         Tuple of (brand, model) or (None, None)
     """
-    # List of known brands (can be expanded)
+    # Remove quantity prefixes like "1x", "2x", "3x Gear Swifts" etc.
+    import re
+    name_cleaned = re.sub(r'^\d+x\s+', '', name)
+
+    # List of known brands (expanded)
     known_brands = [
-        "Zpacks", "ThermaRest", "GramXpert", "Nordisk", "EOE", "Evernew",
+        "Zpacks", "Therm-a-Rest", "ThermaRest", "GramXpert", "Nordisk", "EOE", "Evernew",
         "Tarptent", "Big Agnes", "Nemo", "Sea to Summit", "MSR", "Osprey",
         "Hyperlite", "ULA", "Gossamer Gear", "Six Moon Designs", "Mountain Laurel Designs",
         "Western Mountaineering", "Enlightened Equipment", "Katabatic", "Nunatak",
         "Patagonia", "Arc'teryx", "Outdoor Research", "Black Diamond", "Petzl",
+        "Ruta Locura", "Gear Swifts", "Esbit", "BRS",
     ]
 
-    # Check if name starts with a known brand
+    # Check if name starts with a known brand (case-insensitive)
     for brand in known_brands:
-        if name.lower().startswith(brand.lower()):
-            model = name[len(brand):].strip()
+        if name_cleaned.lower().startswith(brand.lower()):
+            model = name_cleaned[len(brand):].strip()
             return brand, model
 
     # If no known brand, try to split on first space
-    parts = name.split(maxsplit=1)
+    parts = name_cleaned.split(maxsplit=1)
     if len(parts) == 2:
-        # First word might be brand
-        return parts[0], parts[1]
+        # First word might be brand - but skip if it looks like a quantity or generic word
+        potential_brand = parts[0]
+        if not re.match(r'^\d', potential_brand) and potential_brand.lower() not in ['the', 'a', 'an']:
+            return parts[0], parts[1]
 
-    return None, name
+    return None, name_cleaned
 
 
 def import_lighterpack_sync(url: str, auto_research: bool = True) -> dict:
