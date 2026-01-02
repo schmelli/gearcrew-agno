@@ -197,11 +197,11 @@ async def _research_item_specs(
         if not search_results or "No results" in search_results:
             return None
 
-        # Use agent to extract structured data from search results
-        from app.agent import run_agent_chat
+        # Use direct Anthropic API call for simple extraction
+        import os
+        import anthropic
 
-        extract_prompt = f"""
-Extract specifications for this gear item from the search results:
+        extract_prompt = f"""Extract specifications for this gear item from the search results:
 
 Item: {name}
 Brand: {brand or 'unknown'}
@@ -221,10 +221,16 @@ Extract and return ONLY these fields in this exact format:
 - features: [comma-separated key features]
 - product_url: [manufacturer URL if found]
 
-Be concise and accurate. Return "NOT FOUND" if this doesn't appear to be a real product.
-"""
+Be concise and accurate. Return "NOT FOUND" if this doesn't appear to be a real product."""
 
-        response = run_agent_chat(extract_prompt)
+        client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+        message = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=1024,
+            messages=[{"role": "user", "content": extract_prompt}]
+        )
+
+        response = message.content[0].text
 
         # Parse the response
         specs = _parse_specs_response(response, brand, model, weight_grams)
