@@ -24,6 +24,7 @@ from app.tools.youtube import (
     get_playlist_videos,
     get_playlist_info,
 )
+from app.tools.lighterpack_importer import import_lighterpack_sync
 from app.tools.web_scraper import (
     scrape_webpage,
     search_web,
@@ -676,6 +677,44 @@ def verify_product_brand(product_name: str, heard_brand: str) -> str:
         return f"Error verifying brand: {str(e)}"
 
 
+def import_lighterpack_list(url: str, auto_research: bool = True) -> str:
+    """Import a gear list from LighterPack and add items to GearGraph.
+
+    This tool:
+    1. Parses the LighterPack list to extract all gear items
+    2. Checks if each item already exists in the database
+    3. For new items, automatically researches them online and adds to database
+
+    Use this when the user provides a LighterPack URL like:
+    - https://lighterpack.com/r/abc123
+
+    Args:
+        url: LighterPack list URL
+        auto_research: If True, automatically research and add missing items (default: True)
+
+    Returns:
+        Import summary with statistics
+    """
+    try:
+        stats = import_lighterpack_sync(url, auto_research=auto_research)
+
+        output = ["## LighterPack Import Complete\n"]
+        output.append(f"**Total Items:** {stats['total_items']}")
+        output.append(f"**Found in Database:** {stats['found_in_db']}")
+        output.append(f"**Researched & Added:** {stats['researched']}")
+        output.append(f"**Skipped:** {stats['skipped']}")
+        output.append(f"**Errors:** {stats['errors']}")
+
+        if stats['errors'] > 0:
+            output.append("\n**Note:** Some items had errors during research.")
+            output.append("You may want to manually check and add them.")
+
+        return "\n".join(output)
+
+    except Exception as e:
+        return f"Error importing LighterPack list: {str(e)}"
+
+
 # All available tools for agents
 AGENT_TOOLS = [
     # Content fetching tools
@@ -683,6 +722,8 @@ AGENT_TOOLS = [
     fetch_youtube_playlist,  # Fetch playlist and check which videos need processing
     fetch_webpage_content,
     search_gear_info,
+    # LighterPack import
+    import_lighterpack_list,  # Import gear lists from LighterPack URLs
     # Brand verification - MUST USE before saving unfamiliar brands!
     verify_product_brand,  # Verify brand names heard in audio before saving
     # GearGraph database tools - DUPLICATE CHECK FIRST!
