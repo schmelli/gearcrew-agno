@@ -204,6 +204,7 @@ with st.sidebar:
         "Website Extractor",
         "Manufacturer Catalog",
         "Data Enrichment",
+        "Data Hygiene",
         "Video Archive",
         "Firebase Sync",
     ]
@@ -348,6 +349,22 @@ elif st.session_state.view_mode == "Data Enrichment":
     from app.ui.enrichment_view import render_enrichment_view
 
     render_enrichment_view()
+
+elif st.session_state.view_mode == "Data Hygiene":
+    from app.ui.hygiene_queue import render_hygiene_queue, render_hygiene_dashboard
+
+    # Sub-navigation for hygiene views
+    hygiene_tab = st.radio(
+        "Hygiene View:",
+        ["Approval Queue", "Dashboard"],
+        horizontal=True,
+        key="hygiene_tab"
+    )
+
+    if hygiene_tab == "Approval Queue":
+        render_hygiene_queue()
+    else:
+        render_hygiene_dashboard()
 
 elif st.session_state.view_mode == "Video Archive":
     from app.ui.archive_view import render_archive_view
