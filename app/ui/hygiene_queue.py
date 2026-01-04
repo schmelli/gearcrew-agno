@@ -32,12 +32,19 @@ def render_hygiene_queue():
         st.session_state.auto_fixer = AutoFixer()
 
     # Scan controls
-    col1, col2, col3 = st.columns([2, 2, 1])
+    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
 
     with col1:
+        enable_web_validation = st.checkbox(
+            "Web validation",
+            value=False,
+            help="Use web search to verify brands/products (slower but more accurate)"
+        )
+
+    with col2:
         if st.button("Run Hygiene Scan", type="primary"):
             with st.spinner("Scanning database for issues..."):
-                result = run_hygiene_scan()
+                result = run_hygiene_scan(enable_web_validation=enable_web_validation)
                 st.session_state.hygiene_issues = result.get("issues", [])
                 st.session_state.hygiene_scan_time = datetime.now()
 
@@ -48,11 +55,11 @@ def render_hygiene_queue():
             st.success(f"Found {result['total_issues']} issues")
             st.rerun()
 
-    with col2:
+    with col3:
         if st.session_state.hygiene_scan_time:
             st.caption(f"Last scan: {st.session_state.hygiene_scan_time.strftime('%H:%M:%S')}")
 
-    with col3:
+    with col4:
         auto_fix_btn = st.button("Auto-Fix Low-Risk")
 
     # Auto-fix low-risk issues
@@ -193,7 +200,9 @@ def _render_issue_card(issue: HygieneIssue, idx: int):
         fix = issue.suggested_fix
 
         st.write(f"**Action:** {fix.fix_type.value}")
-        if fix.target_field:
+        if fix.fix_type.value == "create_relationship" and fix.target_field:
+            st.write(f"**Link to category:** `{fix.target_field}`")
+        elif fix.target_field:
             st.write(f"**Field:** {fix.target_field}")
         if fix.old_value is not None:
             st.write(f"**Current Value:** `{fix.old_value}`")

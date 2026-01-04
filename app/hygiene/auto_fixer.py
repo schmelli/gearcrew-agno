@@ -65,7 +65,7 @@ class AutoFixer:
 
         # Check if we have a fixer for this fix type
         fix_type = issue.suggested_fix.fix_type
-        return fix_type in [FixType.UPDATE_FIELD]
+        return fix_type in [FixType.UPDATE_FIELD, FixType.CREATE_RELATIONSHIP]
 
     def apply_fix(self, issue: HygieneIssue, force: bool = False) -> FixResult:
         """Apply a fix for the given issue.
@@ -97,6 +97,8 @@ class AutoFixer:
                 result = self._apply_merge(issue)
             elif fix.fix_type == FixType.DELETE_ENTITY:
                 result = self._apply_delete(issue)
+            elif fix.fix_type == FixType.CREATE_RELATIONSHIP:
+                result = self._apply_create_relationship(issue)
             else:
                 return FixResult(
                     success=False,
@@ -428,6 +430,77 @@ class AutoFixer:
                 success=False,
                 issue=issue,
                 message=f"Delete failed: {str(e)}",
+                was_auto_fixed=False,
+            )
+
+    def _apply_create_relationship(self, issue: HygieneIssue) -> FixResult:
+        """Apply a create relationship fix (link insight to gear category).
+
+        Args:
+            issue: The issue with create relationship fix
+
+        Returns:
+            FixResult
+        """
+        fix = issue.suggested_fix
+        insight_id = fix.target_entity_id
+        category = fix.target_field  # Category is stored in target_field
+
+        if not category:
+            return FixResult(
+                success=False,
+                issue=issue,
+                message="No category specified for relationship creation",
+                was_auto_fixed=False,
+            )
+
+        try:
+            insight_id_int = int(insight_id)
+
+            # Get insight info
+            query_info = """
+            MATCH (i:Insight)
+            WHERE id(i) = $id
+            RETURN i.summary AS summary
+            """
+            info = execute_and_fetch(query_info, {"id": insight_id_int})
+            summary = info[0].get("summary", "Unknown")[:50] if info else "Unknown"
+
+            # Find all gear items in the specified category and link them
+            query_link = """
+            MATCH (i:Insight), (g:GearItem)
+            WHERE id(i) = $insight_id AND toLower(g.category) = toLower($category)
+            MERGE (g)-[:HAS_TIP]->(i)
+            RETURN count(g) AS linked_count
+            """
+            result = execute_and_fetch(query_link, {
+                "insight_id": insight_id_int,
+                "category": category,
+            })
+
+            linked_count = result[0].get("linked_count", 0) if result else 0
+
+            if linked_count > 0:
+                return FixResult(
+                    success=True,
+                    issue=issue,
+                    message=f"Linked insight '{summary}...' to {linked_count} {category} items",
+                    was_auto_fixed=issue.can_auto_fix,
+                    applied_at=datetime.now(),
+                )
+            else:
+                return FixResult(
+                    success=False,
+                    issue=issue,
+                    message=f"No items found in category '{category}' to link to",
+                    was_auto_fixed=False,
+                )
+
+        except Exception as e:
+            return FixResult(
+                success=False,
+                issue=issue,
+                message=f"Relationship creation failed: {str(e)}",
                 was_auto_fixed=False,
             )
 

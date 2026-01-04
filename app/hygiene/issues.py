@@ -20,6 +20,8 @@ class IssueType(Enum):
     # Medium Risk (auto-fix with logging)
     SPELLING_VARIANT = "spelling_variant"
     BRAND_STANDARDIZATION = "brand_standardization"
+    INVALID_BRAND = "invalid_brand"  # Generic terms used as brand names
+    REDUNDANT_BRAND = "redundant_brand"  # Brand name appears in product name
     CATEGORY_INFERENCE = "category_inference"
     MISSING_PROVENANCE = "missing_provenance"
     INCOMPLETE_DATA = "incomplete_data"
@@ -73,6 +75,8 @@ DEFAULT_RISK_LEVELS: dict[IssueType, RiskLevel] = {
     # Medium risk - auto-fix with logging
     IssueType.SPELLING_VARIANT: RiskLevel.MEDIUM,
     IssueType.BRAND_STANDARDIZATION: RiskLevel.MEDIUM,
+    IssueType.INVALID_BRAND: RiskLevel.MEDIUM,
+    IssueType.REDUNDANT_BRAND: RiskLevel.LOW,  # Safe to auto-fix with high confidence
     IssueType.CATEGORY_INFERENCE: RiskLevel.MEDIUM,
     IssueType.MISSING_PROVENANCE: RiskLevel.LOW,
     IssueType.INCOMPLETE_DATA: RiskLevel.LOW,
@@ -94,6 +98,8 @@ DEFAULT_THRESHOLDS: dict[IssueType, float] = {
     IssueType.SPECIAL_CHAR_CLEANUP: 0.95,
     IssueType.SPELLING_VARIANT: 0.90,
     IssueType.BRAND_STANDARDIZATION: 0.85,
+    IssueType.INVALID_BRAND: 0.90,
+    IssueType.REDUNDANT_BRAND: 0.95,
     IssueType.CATEGORY_INFERENCE: 0.80,
     IssueType.MISSING_PROVENANCE: 0.95,
     IssueType.INCOMPLETE_DATA: 0.95,
@@ -426,4 +432,40 @@ CANONICAL_BRANDS: dict[str, str] = {
     "OUTDOOR RESEARCH": "Outdoor Research",
     "or": "Outdoor Research",
     "OR": "Outdoor Research",
+}
+
+# Invalid brand names - generic terms that got incorrectly extracted as brands
+# These should be cleared (set to empty or "Unknown")
+INVALID_BRAND_PATTERNS: set[str] = {
+    # Clothing categories
+    "down jacket", "down jackets", "puffy jacket", "puffy jackets",
+    "rain jacket", "rain jackets", "wind jacket", "wind jackets",
+    "base layer", "base layers", "mid layer", "mid layers",
+    "hiking pants", "rain pants", "softshell", "hardshell",
+    "fleece jacket", "fleece jackets", "insulated jacket",
+    # Gear categories
+    "sleeping bag", "sleeping bags", "quilt", "quilts",
+    "sleeping pad", "sleeping pads", "mattress", "air mattress",
+    "tent", "tents", "tarp", "tarps", "shelter", "shelters",
+    "backpack", "backpacks", "daypack", "daypacks", "pack", "packs",
+    "hiking poles", "trekking poles", "walking poles",
+    "headlamp", "headlamps", "flashlight", "flashlights",
+    "water filter", "water filters", "water bottle", "water bottles",
+    "stove", "stoves", "cookware", "cook kit", "pot", "pots",
+    # Generic descriptors
+    "ultralight", "lightweight", "budget", "cheap", "expensive",
+    "best", "top", "premium", "generic", "no name", "no-name",
+    "unknown", "various", "multiple", "different", "other",
+    "misc", "miscellaneous", "assorted", "mixed",
+    # Material descriptors (not brands)
+    "dyneema", "cuben fiber", "silnylon", "silpoly", "dcf",
+    "titanium", "aluminum", "carbon fiber", "nylon", "polyester",
+    # Size/weight descriptors
+    "small", "medium", "large", "xl", "xxl",
+    "1 person", "2 person", "3 person", "1p", "2p", "3p",
+    "20 degree", "30 degree", "40 degree", "0 degree",
+    # Common misextracted phrases
+    "my favorite", "the best", "a great", "this one", "that one",
+    "hiking gear", "backpacking gear", "camping gear", "outdoor gear",
+    "gear list", "gear review", "gear guide",
 }
