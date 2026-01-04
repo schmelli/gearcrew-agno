@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
-from app.db.memgraph import execute_query, execute_and_fetch
+from app.db.memgraph import execute_cypher, execute_and_fetch
 from app.hygiene.issues import (
     IssueType,
     RiskLevel,
@@ -334,7 +334,7 @@ class AutoFixer:
             DELETE r
             RETURN count(*) AS transferred
             """
-            execute_query(query1, {"source_id": source_id_int, "target_id": target_id_int})
+            execute_cypher(query1, {"source_id": source_id_int, "target_id": target_id_int})
 
             # 2. Transfer HAS_TIP relationships
             query2 = """
@@ -346,7 +346,7 @@ class AutoFixer:
             DELETE r
             RETURN count(*) AS transferred
             """
-            execute_query(query2, {"source_id": source_id_int, "target_id": target_id_int})
+            execute_cypher(query2, {"source_id": source_id_int, "target_id": target_id_int})
 
             # 3. Get info before deleting
             query_info = """
@@ -364,7 +364,7 @@ class AutoFixer:
             WHERE id(source) = $source_id
             DETACH DELETE source
             """
-            execute_query(query_delete, {"source_id": source_id_int})
+            execute_cypher(query_delete, {"source_id": source_id_int})
 
             return FixResult(
                 success=True,
@@ -413,7 +413,7 @@ class AutoFixer:
             WHERE id(n) = $id
             DETACH DELETE n
             """
-            execute_query(query_delete, {"id": id_int})
+            execute_cypher(query_delete, {"id": id_int})
 
             return FixResult(
                 success=True,
