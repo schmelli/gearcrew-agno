@@ -378,7 +378,7 @@ class HygieneScanner:
         results = execute_and_fetch(query)
 
         for item in results:
-            summary = item.get("summary", "")[:50]
+            summary = (item.get("summary") or "")[:50]
             issues.append(HygieneIssue(
                 issue_type=IssueType.ORPHANED_NODE,
                 entity_type="Insight",
