@@ -193,3 +193,39 @@ This is an automated summary from GearCrew Agno.
 """
 
         return self._send_email(subject, body)
+
+    def send_heartbeat(
+        self,
+        playlist_title: str,
+        total_videos: int,
+        tracked_videos: int,
+    ) -> bool:
+        """Send heartbeat notification when no new videos found.
+
+        Args:
+            playlist_title: Name of the monitored playlist
+            total_videos: Total videos in playlist
+            tracked_videos: Number of videos already processed
+
+        Returns:
+            True if email sent successfully
+        """
+        subject = f"💚 Playlist Monitor Active: {playlist_title}"
+
+        body = f"""
+Playlist monitoring check completed - no new videos found.
+
+📋 Playlist: {playlist_title}
+
+📊 Status:
+  • Total videos in playlist: {total_videos}
+  • Already processed: {tracked_videos}
+  • New videos: 0
+
+✅ Everything is up to date! Will check again in 6 hours.
+
+---
+This is an automated heartbeat from GearCrew Agno.
+"""
+
+        return self._send_email(subject, body)

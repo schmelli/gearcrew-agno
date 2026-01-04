@@ -69,6 +69,15 @@ class PlaylistMonitor:
 
         if len(new_videos) == 0:
             print("✅ No new videos to process")
+
+            # Send heartbeat notification
+            if self.notifier:
+                self.notifier.send_heartbeat(
+                    playlist_title=playlist_info["title"],
+                    total_videos=playlist_info["video_count"],
+                    tracked_videos=len(all_videos) - len(new_videos),
+                )
+
             return {
                 "new_videos": 0,
                 "processed": 0,
