@@ -37,6 +37,9 @@ jobs:
 
       - name: Run playlist monitoring
         env:
+          # LLM Provider selection (anthropic or deepseek)
+          LLM_PROVIDER: anthropic
+
           # YouTube/Agent settings
           PLAYLIST_URL: ${{ secrets.PLAYLIST_URL }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
