@@ -61,6 +61,9 @@ jobs:
           # Firecrawl settings (if needed)
           FIRECRAWL_API_KEY: ${{ secrets.FIRECRAWL_API_KEY }}
 
+          # Serper settings (for web search/brand verification)
+          SERPER_API_KEY: ${{ secrets.SERPER_API_KEY }}
+
           # LangWatch settings (optional)
           LANGWATCH_API_KEY: ${{ secrets.LANGWATCH_API_KEY }}
         run: |
