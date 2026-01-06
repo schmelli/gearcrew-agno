@@ -197,9 +197,8 @@ async def _research_item_specs(
         if not search_results or "No results" in search_results:
             return None
 
-        # Use direct Anthropic API call for simple extraction
+        # Use LLM for simple extraction (respects LLM_PROVIDER setting)
         import os
-        import anthropic
 
         extract_prompt = f"""Extract specifications for this gear item from the search results:
 
@@ -223,14 +222,31 @@ Extract and return ONLY these fields in this exact format:
 
 Be concise and accurate. Return "NOT FOUND" if this doesn't appear to be a real product."""
 
-        client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-        message = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=1024,
-            messages=[{"role": "user", "content": extract_prompt}]
-        )
+        # Use configured LLM provider (default: deepseek)
+        llm_provider = os.getenv("LLM_PROVIDER", "deepseek").lower()
 
-        response = message.content[0].text
+        if llm_provider == "anthropic":
+            import anthropic
+            client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+            message = client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=1024,
+                messages=[{"role": "user", "content": extract_prompt}]
+            )
+            response = message.content[0].text
+        else:
+            # Use DeepSeek (default)
+            from openai import OpenAI
+            client = OpenAI(
+                api_key=os.environ.get("DEEPSEEK_API_KEY"),
+                base_url="https://api.deepseek.com"
+            )
+            message = client.chat.completions.create(
+                model="deepseek-chat",
+                max_tokens=1024,
+                messages=[{"role": "user", "content": extract_prompt}]
+            )
+            response = message.choices[0].message.content
 
         # Parse the response
         specs = _parse_specs_response(response, brand, model, weight_grams)
