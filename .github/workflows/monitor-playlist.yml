@@ -14,6 +14,8 @@ jobs:
   monitor:
     runs-on: ubuntu-latest
     timeout-minutes: 180  # 3 hours - enough for processing multiple videos
+    permissions:
+      contents: write  # Required for pushing commits back to repo
 
     steps:
       - name: Checkout repository
