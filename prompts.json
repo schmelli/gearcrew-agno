@@ -1,5 +1,6 @@
 {
   "prompts": {
-    "gear-extractor": "file:prompts/gear-extractor.prompt.yaml"
+    "gear-extractor": "file:prompts/gear-extractor.prompt.yaml",
+    "hygiene-evaluator": "file:prompts/hygiene-evaluator.prompt.yaml"
   }
 }
