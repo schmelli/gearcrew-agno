@@ -7,15 +7,39 @@ from urllib.parse import urlparse
 
 import httpx
 
-# Import Playwright scraper functions
-from app.tools.browser_scraper import (
-    scrape_page_sync,
-    extract_products_sync,
-    map_website_sync as playwright_map_website,
-)
+# Lazy imports for Playwright (has greenlet dependency issues in some envs)
+scrape_page_sync = None
+extract_products_sync = None
+playwright_map_website = None
+crawl_reseller_categories_sync = None
+extract_reseller_product_sync = None
+
+
+def _load_playwright_scraper():
+    """Lazy-load Playwright scraper to avoid import issues."""
+    global scrape_page_sync, extract_products_sync, playwright_map_website
+    global crawl_reseller_categories_sync, extract_reseller_product_sync
+
+    if scrape_page_sync is None:
+        from app.tools.browser_scraper import (
+            scrape_page_sync as _scrape,
+            extract_products_sync as _extract,
+            map_website_sync as _map,
+            crawl_reseller_categories_sync as _crawl,
+            extract_reseller_product_sync as _extract_reseller,
+        )
+        scrape_page_sync = _scrape
+        extract_products_sync = _extract
+        playwright_map_website = _map
+        crawl_reseller_categories_sync = _crawl
+        extract_reseller_product_sync = _extract_reseller
+
 
 # Import SmartFirecrawlClient
 from app.tools.smart_firecrawl import get_smart_firecrawl
+
+# Import SmartSiteAnalyzer for LLM-driven extraction
+from app.tools.site_analyzer import get_site_analyzer
 
 # Import Firecrawl-specific functions (for re-export)
 from app.tools.firecrawl_scraper import (
@@ -43,6 +67,11 @@ __all__ = [
     "batch_extract_products",
     "quick_count_products",
     "discover_catalog",
+    # Reseller crawl functions
+    "discover_reseller_catalog",
+    "extract_reseller_product",
+    # Smart LLM-driven discovery
+    "smart_discover_catalog",
 ]
 
 
@@ -56,6 +85,9 @@ def _is_product_url(url: str) -> bool:
     url_lower = url.lower()
     product_patterns = [
         r'/product[s]?/',
+        r'/produkt[e]?/',  # German
+        r'/producto[s]?/',  # Spanish
+        r'/produit[s]?/',  # French
         r'/p/',
         r'/item/',
         r'/gear/',
@@ -63,6 +95,7 @@ def _is_product_url(url: str) -> bool:
         r'/store/',
         r'/buy/',
         r'/catalog/',
+        r'/artikel/',  # German
     ]
     for pattern in product_patterns:
         if re.search(pattern, url_lower):
@@ -74,11 +107,15 @@ def _is_collection_url(url: str) -> bool:
     """Check if a URL looks like a collection/category page."""
     url_lower = url.lower()
     collection_patterns = [
-        r'/collections?/[^/]+$',
-        r'/categories?/[^/]+$',
-        r'/category/[^/]+$',
-        r'/c/[^/]+$',
-        r'/shop/[^/]+$',
+        r'/collections?/[^/]+',
+        r'/categories?/[^/]+',
+        r'/category/[^/]+',
+        r'/kategorie[n]?/[^/]+',  # German
+        r'/categoria[s]?/[^/]+',  # Spanish
+        r'/categorie[s]?/[^/]+',  # French
+        r'/c/[^/]+',
+        r'/shop/[^/]+',
+        r'/product-category/[^/]+',  # WooCommerce
     ]
     for pattern in collection_patterns:
         if re.search(pattern, url_lower):
@@ -131,6 +168,7 @@ def scrape_webpage(url: str, include_markdown: bool = True) -> str:
     """Scrape content from a webpage. Uses Playwright first, Firecrawl fallback."""
     if USE_PLAYWRIGHT_FIRST:
         try:
+            _load_playwright_scraper()
             logger.info(f"Scraping {url} with Playwright")
             result = scrape_page_sync(url)
             if not result.get("error"):
@@ -174,6 +212,17 @@ def search_web(query: str, num_results: int = 5) -> list[dict]:
             json={"q": query, "num": num_results},
             timeout=10.0,
         )
+
+        # Handle out-of-credits gracefully
+        if response.status_code == 400:
+            try:
+                error_data = response.json()
+                if "credit" in error_data.get("message", "").lower():
+                    logger.warning("Serper API out of credits - returning empty results")
+                    return []
+            except Exception:
+                pass
+
         response.raise_for_status()
         data = response.json()
 
@@ -207,6 +256,17 @@ def search_images(query: str, num_results: int = 5) -> list[dict]:
             json={"q": query, "num": num_results},
             timeout=10.0,
         )
+
+        # Handle out-of-credits gracefully
+        if response.status_code == 400:
+            try:
+                error_data = response.json()
+                if "credit" in error_data.get("message", "").lower():
+                    logger.warning("Serper API out of credits - returning empty image results")
+                    return []
+            except Exception:
+                pass
+
         response.raise_for_status()
         data = response.json()
         images = data.get("images", [])[:num_results]
@@ -259,6 +319,17 @@ def search_product_weights(product_name: str, brand: str = "", num_sources: int 
         resp = httpx.post("https://google.serper.dev/search",
                           headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
                           json={"q": query, "num": num_sources * 2}, timeout=10.0)
+
+        # Handle out-of-credits gracefully
+        if resp.status_code == 400:
+            try:
+                error_data = resp.json()
+                if "credit" in error_data.get("message", "").lower():
+                    logger.warning("Serper API out of credits - returning empty weight results")
+                    return []
+            except Exception:
+                pass
+
         resp.raise_for_status()
         organic = resp.json().get("organic", [])
 
@@ -348,6 +419,25 @@ def verify_brand_product(product_name: str, heard_brand: str) -> dict:
             json={"q": query, "num": 10},
             timeout=15.0,
         )
+
+        # Check for credit/billing issues (400 with "Not enough credits")
+        if resp.status_code == 400:
+            try:
+                error_data = resp.json()
+                if "credit" in error_data.get("message", "").lower():
+                    logger.warning("Serper API out of credits - skipping brand verification")
+                    return {
+                        "verified": False,
+                        "correct_brand": heard_brand,
+                        "correct_product": product_name,
+                        "manufacturer_url": "",
+                        "confidence": "none",
+                        "evidence": [],
+                        "notes": "Serper API out of credits - brand not verified. Proceed with caution.",
+                    }
+            except Exception:
+                pass
+
         resp.raise_for_status()
         data = resp.json()
         organic = data.get("organic", [])
@@ -466,6 +556,17 @@ def research_product(product_name: str, brand: str = "", num_results: int = 5) -
             json={"q": query, "num": num_results * 2},
             timeout=10.0,
         )
+
+        # Handle out-of-credits gracefully
+        if resp.status_code == 400:
+            try:
+                error_data = resp.json()
+                if "credit" in error_data.get("message", "").lower():
+                    logger.warning("Serper API out of credits - returning empty research results")
+                    return []
+            except Exception:
+                pass
+
         resp.raise_for_status()
         organic = resp.json().get("organic", [])
 
@@ -501,6 +602,7 @@ def map_website(url: str, max_pages: int = 100) -> dict:
     """Map a website to discover all pages. Uses Playwright first, Firecrawl fallback."""
     if USE_PLAYWRIGHT_FIRST:
         try:
+            _load_playwright_scraper()
             logger.info(f"Mapping {url} with Playwright")
             result = playwright_map_website(url, max_pages=max_pages)
             if not result.get("error"):
@@ -558,6 +660,7 @@ def quick_count_products(url: str) -> dict:
     """Quickly count products on a collection page. Playwright first, Firecrawl fallback."""
     if USE_PLAYWRIGHT_FIRST:
         try:
+            _load_playwright_scraper()
             logger.info(f"Quick counting at {url} with Playwright")
             result = extract_products_sync(url)
             if not result.get("error"):
@@ -660,6 +763,7 @@ def discover_catalog(url: str, max_pages: int = 300) -> dict:
     """Discover a manufacturer's product catalog. Playwright first, Firecrawl fallback."""
     if USE_PLAYWRIGHT_FIRST:
         try:
+            _load_playwright_scraper()
             logger.info(f"Discovering catalog for {url} with Playwright")
             result = playwright_map_website(url, max_pages=max_pages)
             if not result.get("error"):
@@ -706,3 +810,136 @@ def discover_catalog(url: str, max_pages: int = 300) -> dict:
         }
     except Exception as e:
         raise ValueError(f"Failed to discover catalog for {url}: {str(e)}")
+
+
+def discover_reseller_catalog(
+    category_base_url: str, product_base_url: str = "", max_categories: int = 50
+) -> dict:
+    """Discover a reseller site's product catalog by crawling category structure.
+
+    This is designed for multi-brand reseller sites (like 360-outdoor.de) that have:
+    - Hierarchical category structure (e.g., /kategorie/ausruestung/isomatten/)
+    - Individual product pages (e.g., /produkt/brand-product-name/)
+
+    Unlike manufacturer catalog discovery, this:
+    - Handles multiple brands per category
+    - Follows hierarchical category structures
+    - Finds product URLs based on common patterns (/produkt/, /product/, etc.)
+
+    Args:
+        category_base_url: Base URL for categories (e.g., https://360-outdoor.de/kategorie/)
+        product_base_url: Optional base URL for products (auto-detected if not provided)
+        max_categories: Maximum number of categories to crawl (default: 50)
+
+    Returns:
+        dict with discovered categories and product URLs
+    """
+    try:
+        _load_playwright_scraper()
+        logger.info(f"Discovering reseller catalog from {category_base_url}")
+        result = crawl_reseller_categories_sync(category_base_url, product_base_url, max_categories)
+
+        if result.get("error"):
+            raise ValueError(result["error"])
+
+        return result
+
+    except Exception as e:
+        raise ValueError(f"Failed to discover reseller catalog: {str(e)}")
+
+
+def extract_reseller_product(url: str) -> dict:
+    """Extract product details from a reseller product page.
+
+    Unlike manufacturer extraction, this handles multi-brand products
+    and tries to identify the brand from the page content.
+
+    Works with common e-commerce platforms (WooCommerce, Shopify, etc.)
+    and supports German/EU sites.
+
+    Args:
+        url: Product page URL
+
+    Returns:
+        dict with product details including brand, name, price, weight, etc.
+    """
+    try:
+        _load_playwright_scraper()
+        logger.info(f"Extracting reseller product from {url}")
+        result = extract_reseller_product_sync(url)
+
+        if result.get("error"):
+            raise ValueError(result["error"])
+
+        return result
+
+    except Exception as e:
+        raise ValueError(f"Failed to extract product from {url}: {str(e)}")
+
+
+def smart_discover_catalog(
+    url: str,
+    max_products: int = 100,
+    force_reanalyze: bool = False,
+) -> dict:
+    """Discover and extract products using LLM-driven site analysis.
+
+    This is the RECOMMENDED approach for extracting products from any e-commerce site.
+    Instead of relying on hardcoded URL patterns, it uses an LLM to analyze the site
+    structure and discover the patterns dynamically.
+
+    How it works:
+    1. Uses self-hosted Firecrawl map() to discover all URLs (FREE)
+    2. Samples ~50 URLs and sends them to DeepSeek LLM (~$0.01)
+    3. LLM identifies product/category patterns with confidence scores
+    4. Filters URLs using discovered patterns
+    5. Scrapes product pages using self-hosted Firecrawl (FREE)
+    6. Falls back to cloud crawl only if confidence is too low
+
+    This approach:
+    - Works with ANY e-commerce platform (Shopify, WooCommerce, custom, etc.)
+    - Handles German sites (/produkt/, /kategorie/, /kategorien/)
+    - Handles Shopify (/products/, /collections/)
+    - Handles custom URL structures
+    - Caches patterns for 24 hours (instant re-runs)
+    - Costs ~$0.01-0.02 per site vs $0.50-2.00 for cloud crawl
+
+    Args:
+        url: Base URL of the website to analyze
+        max_products: Maximum number of products to extract (default: 100)
+        force_reanalyze: Skip cached analysis and re-run LLM (default: False)
+
+    Returns:
+        dict with:
+        - products: list of extracted product dicts
+        - patterns: discovered URL patterns (for debugging)
+        - source: "smart_extraction" or "cloud_crawl_fallback"
+        - from_cache: whether patterns came from cache
+        - estimated_cost: approximate LLM cost
+        - stats: extraction statistics
+    """
+    try:
+        logger.info(f"Smart discovery starting for {url}")
+        analyzer = get_site_analyzer()
+        result = analyzer.analyze_and_extract(
+            base_url=url,
+            max_products=max_products,
+            force_reanalyze=force_reanalyze,
+        )
+
+        # Convert to dict for agent consumption
+        return {
+            "products": result.products,
+            "patterns": result.patterns.to_dict() if result.patterns else None,
+            "source": result.source,
+            "from_cache": result.from_cache,
+            "estimated_cost": result.estimated_cost,
+            "stats": result.stats,
+            "product_count": len(result.products),
+            "platform": result.patterns.platform if result.patterns else "unknown",
+            "confidence": result.patterns.overall_confidence if result.patterns else 0,
+        }
+
+    except Exception as e:
+        logger.error(f"Smart discovery failed for {url}: {e}")
+        raise ValueError(f"Smart discovery failed for {url}: {str(e)}")
