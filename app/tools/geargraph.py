@@ -48,6 +48,20 @@ from app.db.memgraph import (
     get_gear_opinions,
     save_usage_context,
     get_gear_usage_contexts,
+    # New rich-relationship functions
+    save_gear_compatibility,
+    get_gear_compatibility,
+    save_insight,
+    get_insights,
+    search_insights,
+    assign_product_type,
+    get_product_types,
+    get_gear_by_product_type,
+    save_weather_performance,
+    save_temperature_range,
+    get_gear_by_temperature,
+    # Exception for error handling
+    CypherExecutionError,
 )
 
 logger = logging.getLogger(__name__)
@@ -333,6 +347,10 @@ def save_gear_to_graph(
     fuel_type: Optional[str] = None,
     filter_type: Optional[str] = None,
     flow_rate: Optional[str] = None,
+    # Additional fields from smart extraction
+    dimensions: Optional[str] = None,
+    use_cases: Optional[str] = None,
+    currency: Optional[str] = None,
 ) -> str:
     """Save a gear item to the GearGraph database with full specifications.
 
@@ -376,8 +394,13 @@ def save_gear_to_graph(
         if features:
             features_list = [f.strip() for f in features.split(",")]
 
+        # Convert use_cases comma-separated string to list
+        use_cases_list = None
+        if use_cases:
+            use_cases_list = [u.strip() for u in use_cases.split(",")]
+
         # Parse all numeric fields safely (handles "unknown", "N/A", etc.)
-        success = merge_gear_item(
+        success, message = merge_gear_item(
             name=name,
             brand=brand,
             category=category,
@@ -404,12 +427,21 @@ def save_gear_to_graph(
             fuel_type=fuel_type,
             filter_type=filter_type,
             flow_rate=flow_rate,
+            # Additional fields
+            dimensions=dimensions,
+            use_cases=use_cases_list,
+            currency=currency,
         )
 
         if success:
             return f"Successfully saved '{name}' by {brand} to GearGraph."
-        return f"Failed to save '{name}' to GearGraph."
+        # Return the actual error message from merge_gear_item
+        logger.error(f"Failed to save gear: {message}")
+        return f"FAILED to save '{name}' by {brand}: {message}"
 
+    except CypherExecutionError as e:
+        logger.error(f"Database error saving gear: {e}")
+        return f"DATABASE ERROR saving '{name}': {str(e)}"
     except Exception as e:
         logger.error(f"Error saving gear to graph: {e}")
         return f"Error saving to graph: {str(e)}"
@@ -453,6 +485,84 @@ def save_insight_to_graph(
     except Exception as e:
         logger.error(f"Error saving insight to graph: {e}")
         return f"Error saving insight: {str(e)}"
+
+
+def save_products_batch(products: list[dict], progress_reporter=None) -> tuple[int, int]:
+    """Save a batch of products to the GearGraph database.
+
+    This function is designed to be used as a callback for incremental saving
+    during extraction. It saves each product and reports progress.
+
+    Args:
+        products: List of product dicts with keys: name, brand, category, weight_grams,
+                  price, source_url, description, materials, features, dimensions, use_cases, currency
+        progress_reporter: Optional ProgressReporter for status updates
+
+    Returns:
+        Tuple of (saved_count, failed_count)
+    """
+    saved = 0
+    failed = 0
+
+    for prod in products:
+        try:
+            name = prod.get('name', '')
+            brand = prod.get('brand', prod.get('potential_brand', 'Unknown'))
+            category = prod.get('category', 'gear')
+            source_url = prod.get('source_url', '')
+
+            if not name:
+                failed += 1
+                continue
+
+            # Convert lists to comma-separated strings
+            materials = ', '.join(prod.get('materials', [])) if prod.get('materials') else None
+            features = ', '.join(prod.get('features', [])) if prod.get('features') else None
+            use_cases = ', '.join(prod.get('use_cases', [])) if prod.get('use_cases') else None
+
+            # Save the product
+            result = save_gear_to_graph(
+                name=name,
+                brand=brand,
+                category=category,
+                weight_grams=prod.get('weight_grams'),
+                price_usd=prod.get('price'),
+                source_url=source_url,
+                description=prod.get('description'),
+                materials=materials,
+                features=features,
+                dimensions=prod.get('dimensions'),
+                use_cases=use_cases,
+                currency=prod.get('currency'),
+            )
+
+            if "Successfully" in result:
+                saved += 1
+
+                # Report to progress reporter if provided
+                if progress_reporter and hasattr(progress_reporter, 'product_saved'):
+                    progress_reporter.product_saved(name, brand, success=True)
+
+                # Also link to source URL
+                if source_url:
+                    link_extracted_gear_to_source(name, brand, source_url)
+
+                logger.info(f"💾 Saved: {brand} {name}")
+            else:
+                failed += 1
+                if progress_reporter and hasattr(progress_reporter, 'product_saved'):
+                    progress_reporter.product_saved(name, brand, success=False, error=result)
+                logger.warning(f"⚠️ Failed to save: {brand} {name} - {result}")
+
+        except Exception as e:
+            failed += 1
+            name = prod.get('name', 'unknown')
+            brand = prod.get('brand', 'unknown')
+            logger.error(f"Exception saving {brand} {name}: {e}")
+            if progress_reporter and hasattr(progress_reporter, 'product_saved'):
+                progress_reporter.product_saved(name, brand, success=False, error=str(e))
+
+    return saved, failed
 
 
 def search_graph(query: str, limit: int = 10) -> str:
@@ -1673,4 +1783,450 @@ def get_recommended_usage(gear_name: str, brand: str) -> str:
 
     except Exception as e:
         logger.error(f"Error getting usage contexts: {e}")
+        return f"Error: {str(e)}"
+
+
+# ============================================================================
+# GEAR COMPATIBILITY (PAIRS_WITH, INCOMPATIBLE, etc.)
+# ============================================================================
+
+
+def save_gear_compatibility_tool(
+    gear1_name: str,
+    gear1_brand: str,
+    gear2_name: str,
+    gear2_brand: str,
+    compatibility_type: str,
+    notes: Optional[str] = None,
+    source_url: Optional[str] = None,
+) -> str:
+    """Save a compatibility relationship between two gear items.
+
+    Use this when videos/articles discuss what gear works well together,
+    what's incompatible, or what gear requires/enhances other gear.
+
+    Examples:
+    - "The Nemo Tensor pairs perfectly with the EE Enigma quilt"
+    - "Don't use this tent with carbon fiber poles - they're too flexible"
+    - "This stove requires a windscreen to work efficiently"
+
+    Args:
+        gear1_name: First gear item name
+        gear1_brand: First gear item brand
+        gear2_name: Second gear item name
+        gear2_brand: Second gear item brand
+        compatibility_type: Type of relationship:
+            - "pairs_well": Items work great together
+            - "incompatible": Items don't work well together
+            - "requires": First item requires/needs second item
+            - "enhances": First item enhances second item's performance
+        notes: Explanation of the compatibility
+        source_url: Where this was mentioned
+
+    Returns:
+        Success or error message
+    """
+    valid_types = ["pairs_well", "incompatible", "requires", "enhances"]
+    if compatibility_type.lower() not in valid_types:
+        return f"Invalid compatibility_type. Use one of: {valid_types}"
+
+    try:
+        success = save_gear_compatibility(
+            gear1_name=gear1_name,
+            gear1_brand=gear1_brand,
+            gear2_name=gear2_name,
+            gear2_brand=gear2_brand,
+            compatibility_type=compatibility_type,
+            notes=notes,
+            source_url=source_url,
+        )
+
+        if success:
+            return f"Saved compatibility: '{gear1_name}' {compatibility_type} '{gear2_name}'"
+        return "Failed to save compatibility - ensure both gear items exist in the database"
+
+    except Exception as e:
+        logger.error(f"Error saving compatibility: {e}")
+        return f"Error: {str(e)}"
+
+
+def get_gear_compatibility_tool(gear_name: str, brand: str) -> str:
+    """Get all compatibility relationships for a gear item.
+
+    Args:
+        gear_name: Name of the gear item
+        brand: Brand of the gear item
+
+    Returns:
+        Formatted list of compatibility relationships
+    """
+    try:
+        compat = get_gear_compatibility(gear_name, brand)
+
+        if not compat:
+            return f"No compatibility data found for '{gear_name}' by {brand}"
+
+        output = [f"## Compatibility for {gear_name} by {brand}\n"]
+
+        # Group by type
+        by_type = {}
+        for c in compat:
+            t = c.get("type", "other")
+            if t not in by_type:
+                by_type[t] = []
+            by_type[t].append(c)
+
+        type_labels = {
+            "pairs_well": "Works Well With",
+            "incompatible": "Incompatible With",
+            "requires": "Requires",
+            "enhances": "Enhances",
+        }
+
+        for ctype, items in by_type.items():
+            output.append(f"### {type_labels.get(ctype, ctype)}")
+            for item in items:
+                line = f"- {item['item']} ({item['brand']})"
+                if item.get("notes"):
+                    line += f": {item['notes']}"
+                output.append(line)
+
+        return "\n".join(output)
+
+    except Exception as e:
+        logger.error(f"Error getting compatibility: {e}")
+        return f"Error: {str(e)}"
+
+
+# ============================================================================
+# GENERAL INSIGHTS (Non-product-specific knowledge)
+# ============================================================================
+
+
+def save_insight_to_graph(
+    summary: str,
+    content: str,
+    category: str,
+    source_url: Optional[str] = None,
+) -> str:
+    """Save a general insight or piece of trail wisdom (not product-specific).
+
+    Use this for general knowledge that applies broadly, not just to one product.
+
+    Examples:
+    - "Beim Ultralight-Hiking gilt: Basisgewicht unter 4.5kg"
+    - "Die Big 3 machen etwa 60% des Basisgewichts aus"
+    - "In feuchten Klimazonen ist Synthetik-Isolierung oft besser als Daune"
+    - "Titanium ist 40% leichter als Stahl bei gleicher Festigkeit"
+
+    Args:
+        summary: Short title/summary of the insight (< 100 chars)
+        content: Full content of the insight
+        category: Category of insight:
+            - "Material Knowledge": Info about materials (Dyneema, Titanium, etc.)
+            - "Technique": How to do things (pitching, packing, etc.)
+            - "Trail Wisdom": General hiking/backpacking advice
+            - "Weather/Climate": Weather-related knowledge
+            - "Gear Philosophy": Ultralight philosophy, layering, etc.
+            - "Weight Optimization": Tips for reducing pack weight
+            - "Safety": Safety-related knowledge
+            - "Maintenance": Care and maintenance tips
+        source_url: Where this insight was found
+
+    Returns:
+        Success or error message
+    """
+    valid_categories = [
+        "Material Knowledge", "Technique", "Trail Wisdom", "Weather/Climate",
+        "Gear Philosophy", "Weight Optimization", "Safety", "Maintenance"
+    ]
+
+    try:
+        success = save_insight(
+            summary=summary,
+            content=content,
+            category=category,
+            source_url=source_url,
+        )
+
+        if success:
+            return f"Saved insight: '{summary}' in category '{category}'"
+        return "Failed to save insight"
+
+    except Exception as e:
+        logger.error(f"Error saving insight: {e}")
+        return f"Error: {str(e)}"
+
+
+def search_insights_tool(query: str) -> str:
+    """Search for insights by keyword.
+
+    Args:
+        query: Search term
+
+    Returns:
+        Matching insights
+    """
+    try:
+        results = search_insights(query)
+
+        if not results:
+            return f"No insights found matching '{query}'"
+
+        output = [f"## Insights matching '{query}'\n"]
+        for insight in results:
+            output.append(f"### {insight['summary']}")
+            output.append(f"**Category:** {insight.get('category', 'Unknown')}")
+            output.append(f"{insight['content']}\n")
+
+        return "\n".join(output)
+
+    except Exception as e:
+        logger.error(f"Error searching insights: {e}")
+        return f"Error: {str(e)}"
+
+
+# ============================================================================
+# PRODUCT TYPE / CATEGORY HIERARCHY
+# ============================================================================
+
+
+def assign_product_type_tool(
+    gear_name: str,
+    brand: str,
+    product_type: str,
+    source_url: Optional[str] = None,
+) -> str:
+    """Assign a specific product type to a gear item for hierarchical categorization.
+
+    This creates fine-grained categorization beyond the basic category.
+
+    Examples:
+    - Tent category -> Product types: "Trekking Pole Tent", "Freestanding Tent", "Tarp", "Bivy"
+    - Sleeping Bag -> Product types: "Quilt", "Mummy Bag", "Elephant Foot"
+    - Backpack -> Product types: "Frameless", "Framed", "Running Vest"
+    - Stove -> Product types: "Canister Stove", "Alcohol Stove", "Wood Stove", "Solid Fuel"
+
+    Args:
+        gear_name: Name of the gear item
+        brand: Brand of the gear item
+        product_type: The specific product type (e.g., "Trekking Pole Tent")
+        source_url: Where this classification was found
+
+    Returns:
+        Success or error message
+    """
+    try:
+        success = assign_product_type(
+            gear_name=gear_name,
+            brand=brand,
+            product_type=product_type,
+            source_url=source_url,
+        )
+
+        if success:
+            return f"Assigned product type '{product_type}' to '{gear_name}' by {brand}"
+        return "Failed to assign product type - ensure gear item exists"
+
+    except Exception as e:
+        logger.error(f"Error assigning product type: {e}")
+        return f"Error: {str(e)}"
+
+
+def list_product_types() -> str:
+    """List all product types in the database with item counts.
+
+    Returns:
+        Formatted list of product types
+    """
+    try:
+        types = get_product_types()
+
+        if not types:
+            return "No product types found in database"
+
+        output = ["## Product Types in GearGraph\n"]
+        for t in types:
+            output.append(f"- **{t['product_type']}**: {t['item_count']} items")
+
+        return "\n".join(output)
+
+    except Exception as e:
+        logger.error(f"Error listing product types: {e}")
+        return f"Error: {str(e)}"
+
+
+# ============================================================================
+# WEATHER PERFORMANCE & TEMPERATURE RANGE
+# ============================================================================
+
+
+def save_weather_performance_tool(
+    gear_name: str,
+    brand: str,
+    weather_type: str,
+    performance_rating: str,
+    notes: Optional[str] = None,
+    source_url: Optional[str] = None,
+) -> str:
+    """Save how gear performs in specific weather conditions.
+
+    Use this when videos/articles discuss gear performance in different weather.
+
+    Examples:
+    - "Das Duplex ist bei starkem Wind problematisch"
+    - "Diese Jacke hält auch bei Dauerregen trocken"
+    - "Der Schlafsack verliert bei Feuchtigkeit Isolationsleistung"
+
+    Args:
+        gear_name: Name of the gear item
+        brand: Brand of the gear item
+        weather_type: Type of weather condition:
+            - "rain": Performance in rain
+            - "snow": Performance in snow
+            - "wind": Performance in windy conditions
+            - "heat": Performance in hot conditions
+            - "cold": Performance in cold conditions
+            - "humidity": Performance in humid conditions
+        performance_rating: How well it performs:
+            - "excellent": Works great in this condition
+            - "good": Works well
+            - "fair": Works okay, with limitations
+            - "poor": Struggles in this condition
+        notes: Additional context about performance
+        source_url: Where this was mentioned
+
+    Returns:
+        Success or error message
+    """
+    valid_weather = ["rain", "snow", "wind", "heat", "cold", "humidity"]
+    valid_ratings = ["excellent", "good", "fair", "poor"]
+
+    if weather_type.lower() not in valid_weather:
+        return f"Invalid weather_type. Use one of: {valid_weather}"
+    if performance_rating.lower() not in valid_ratings:
+        return f"Invalid performance_rating. Use one of: {valid_ratings}"
+
+    try:
+        success = save_weather_performance(
+            gear_name=gear_name,
+            brand=brand,
+            weather_type=weather_type.lower(),
+            performance_rating=performance_rating.lower(),
+            notes=notes,
+            source_url=source_url,
+        )
+
+        if success:
+            return f"Saved weather performance: '{gear_name}' is {performance_rating} in {weather_type}"
+        return "Failed to save weather performance - ensure gear item exists"
+
+    except Exception as e:
+        logger.error(f"Error saving weather performance: {e}")
+        return f"Error: {str(e)}"
+
+
+def save_temperature_range_tool(
+    gear_name: str,
+    brand: str,
+    min_temp_c: Optional[float] = None,
+    max_temp_c: Optional[float] = None,
+    comfort_temp_c: Optional[float] = None,
+    notes: Optional[str] = None,
+    source_url: Optional[str] = None,
+) -> str:
+    """Save temperature range information for gear (sleeping bags, quilts, jackets, etc.).
+
+    Use this when videos/articles discuss usable temperature ranges.
+
+    Examples:
+    - "Der Quilt ist bis -5°C komfortabel"
+    - "Diese Jacke ist für 0°C bis -20°C ausgelegt"
+    - "Die Isomatte hat einen R-Wert von 4.5, gut bis -10°C"
+
+    Args:
+        gear_name: Name of the gear item
+        brand: Brand of the gear item
+        min_temp_c: Minimum usable temperature (Celsius)
+        max_temp_c: Maximum usable temperature (Celsius)
+        comfort_temp_c: Comfort rating temperature (Celsius)
+        notes: Additional context (e.g., "with base layer", "limit rating")
+        source_url: Where this was mentioned
+
+    Returns:
+        Success or error message
+    """
+    if min_temp_c is None and max_temp_c is None and comfort_temp_c is None:
+        return "Please provide at least one temperature value (min_temp_c, max_temp_c, or comfort_temp_c)"
+
+    try:
+        success = save_temperature_range(
+            gear_name=gear_name,
+            brand=brand,
+            min_temp_c=_parse_float(min_temp_c),
+            max_temp_c=_parse_float(max_temp_c),
+            comfort_temp_c=_parse_float(comfort_temp_c),
+            notes=notes,
+            source_url=source_url,
+        )
+
+        temps = []
+        if min_temp_c is not None:
+            temps.append(f"min={min_temp_c}°C")
+        if max_temp_c is not None:
+            temps.append(f"max={max_temp_c}°C")
+        if comfort_temp_c is not None:
+            temps.append(f"comfort={comfort_temp_c}°C")
+
+        if success:
+            return f"Saved temperature range for '{gear_name}': {', '.join(temps)}"
+        return "Failed to save temperature range - ensure gear item exists"
+
+    except Exception as e:
+        logger.error(f"Error saving temperature range: {e}")
+        return f"Error: {str(e)}"
+
+
+def find_gear_for_temperature(temp_c: float) -> str:
+    """Find gear suitable for a specific temperature.
+
+    Args:
+        temp_c: Target temperature in Celsius
+
+    Returns:
+        List of suitable gear items
+    """
+    try:
+        results = get_gear_by_temperature(temp_c)
+
+        if not results:
+            return f"No gear found with temperature data for {temp_c}°C"
+
+        output = [f"## Gear for {temp_c}°C\n"]
+
+        # Group by category
+        by_cat = {}
+        for item in results:
+            cat = item.get("category", "other")
+            if cat not in by_cat:
+                by_cat[cat] = []
+            by_cat[cat].append(item)
+
+        for cat, items in by_cat.items():
+            output.append(f"### {cat.replace('_', ' ').title()}")
+            for item in items:
+                temps = []
+                if item.get("min_temp"):
+                    temps.append(f"min: {item['min_temp']}°C")
+                if item.get("max_temp"):
+                    temps.append(f"max: {item['max_temp']}°C")
+                if item.get("comfort_temp"):
+                    temps.append(f"comfort: {item['comfort_temp']}°C")
+                temp_str = f" ({', '.join(temps)})" if temps else ""
+                output.append(f"- **{item['name']}** by {item['brand']}{temp_str}")
+
+        return "\n".join(output)
+
+    except Exception as e:
+        logger.error(f"Error finding gear for temperature: {e}")
         return f"Error: {str(e)}"

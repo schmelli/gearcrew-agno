@@ -6,9 +6,16 @@ and utility functions for common operations.
 
 import os
 import logging
+import warnings
 from typing import Any, Optional
 
 from dotenv import load_dotenv
+
+# Suppress gqlalchemy warnings about missing model subclasses
+# (We use raw Cypher, not ORM models)
+from gqlalchemy.models import GQLAlchemySubclassNotFoundWarning
+warnings.filterwarnings("ignore", category=GQLAlchemySubclassNotFoundWarning)
+
 from gqlalchemy import Memgraph
 from rapidfuzz import fuzz, process
 
@@ -96,22 +103,40 @@ def _reconnect_and_retry(func):
     return wrapper
 
 
-def execute_cypher(query: str, params: Optional[dict] = None) -> bool:
+class CypherExecutionError(Exception):
+    """Exception raised when a Cypher query fails."""
+
+    def __init__(self, message: str, query: str = "", params: dict = None):
+        self.query = query
+        self.params = params
+        super().__init__(message)
+
+
+def execute_cypher(
+    query: str, params: Optional[dict] = None, raise_on_error: bool = False
+) -> bool:
     """Execute a Cypher query without returning results.
 
     Args:
         query: Cypher query to execute
         params: Optional query parameters
+        raise_on_error: If True, raises CypherExecutionError on failure instead of returning False
 
     Returns:
-        True if successful, False otherwise
+        True if successful, False otherwise (unless raise_on_error=True)
+
+    Raises:
+        CypherExecutionError: If raise_on_error=True and execution fails
     """
     global _memgraph
 
     for attempt in range(2):
         db = get_memgraph(force_reconnect=(attempt > 0))
         if db is None:
-            logger.error("No database connection available")
+            error_msg = "No database connection available"
+            logger.error(error_msg)
+            if raise_on_error:
+                raise CypherExecutionError(error_msg, query, params)
             return False
 
         try:
@@ -127,8 +152,15 @@ def execute_cypher(query: str, params: Optional[dict] = None) -> bool:
                 _memgraph = None
                 continue
             logger.error(f"Cypher execution failed: {e}")
+            logger.debug(f"Failed query: {query[:200]}...")
+            logger.debug(f"Failed params: {params}")
+            if raise_on_error:
+                raise CypherExecutionError(str(e), query, params)
             return False
 
+    error_msg = "Cypher execution failed after retries"
+    if raise_on_error:
+        raise CypherExecutionError(error_msg, query, params)
     return False
 
 
@@ -290,7 +322,11 @@ def merge_gear_item(
     fuel_type: Optional[str] = None,  # Stoves
     filter_type: Optional[str] = None,  # Water filters
     flow_rate: Optional[str] = None,  # Water filters
-) -> bool:
+    # Additional fields from smart extraction
+    dimensions: Optional[str] = None,  # Product dimensions
+    use_cases: Optional[list[str]] = None,  # Use cases like camping, hiking
+    currency: Optional[str] = None,  # Price currency (EUR, USD)
+) -> tuple[bool, str]:
     """Merge a gear item into the graph (create or update).
 
     Uses MERGE to prevent duplicates. Supports category-specific properties.
@@ -324,14 +360,16 @@ def merge_gear_item(
         flow_rate: Flow rate (water filters)
 
     Returns:
-        True if successful
+        Tuple of (success: bool, message: str) - message contains error details on failure
     """
     # First ensure the brand exists
     brand_query = """
     MERGE (b:OutdoorBrand {name: $brand})
     RETURN b
     """
-    execute_cypher(brand_query, {"brand": brand})
+    brand_success = execute_cypher(brand_query, {"brand": brand})
+    if not brand_success:
+        return False, f"Failed to create/merge brand '{brand}'"
 
     # Build the SET clause dynamically for optional fields
     set_parts = []
@@ -363,6 +401,10 @@ def merge_gear_item(
         ("fuel_type", fuel_type, "g.fuelType"),
         ("filter_type", filter_type, "g.filterType"),
         ("flow_rate", flow_rate, "g.flowRate"),
+        # Additional fields
+        ("dimensions", dimensions, "g.dimensions"),
+        ("use_cases", use_cases, "g.useCases"),
+        ("currency", currency, "g.currency"),
     ]
 
     for param_name, value, prop_path in optional_props:
@@ -382,7 +424,11 @@ def merge_gear_item(
     RETURN g
     """
 
-    return execute_cypher(item_query, params)
+    success = execute_cypher(item_query, params)
+    if success:
+        return True, f"Successfully saved '{name}' by {brand}"
+    else:
+        return False, f"Failed to save gear item '{name}' by {brand} - Cypher execution failed"
 
 
 def merge_insight(
@@ -527,6 +573,8 @@ def save_video_source(
 def link_gear_to_source(gear_name: str, brand: str, source_url: str) -> bool:
     """Create a relationship between a gear item and its source.
 
+    Automatically creates the VideoSource node if it doesn't exist.
+
     Args:
         gear_name: Name of the gear item
         brand: Brand of the gear item
@@ -535,12 +583,25 @@ def link_gear_to_source(gear_name: str, brand: str, source_url: str) -> bool:
     Returns:
         True if successful
     """
-    query = """
+    # First ensure the source exists (MERGE to create if not exists)
+    source_query = """
+    MERGE (s:VideoSource {url: $url})
+    ON CREATE SET s.processedAt = datetime(), s.title = 'Auto-created source'
+    RETURN s
+    """
+    source_success = execute_cypher(source_query, {"url": source_url})
+    if not source_success:
+        logger.error(f"Failed to create/find source: {source_url}")
+        return False
+
+    # Now link the gear to the source
+    link_query = """
     MATCH (g:GearItem {name: $name, brand: $brand})
     MATCH (s:VideoSource {url: $url})
     MERGE (g)-[:EXTRACTED_FROM]->(s)
+    RETURN g.name
     """
-    return execute_cypher(query, {"name": gear_name, "brand": brand, "url": source_url})
+    return execute_cypher(link_query, {"name": gear_name, "brand": brand, "url": source_url})
 
 
 def get_all_video_sources(limit: int = 50) -> list[dict]:
@@ -1815,3 +1876,423 @@ def get_gear_usage_contexts(gear_name: str, brand: str) -> list[dict]:
            r.sourceUrl as source_url
     """
     return execute_and_fetch(query, {"name": gear_name, "brand": brand})
+
+
+# ============================================================================
+# Gear Compatibility (PAIRS_WITH, INCOMPATIBLE, etc.)
+# ============================================================================
+
+
+def save_gear_compatibility(
+    gear1_name: str,
+    gear1_brand: str,
+    gear2_name: str,
+    gear2_brand: str,
+    compatibility_type: str,
+    notes: Optional[str] = None,
+    source_url: Optional[str] = None,
+) -> bool:
+    """Save a compatibility relationship between two gear items.
+
+    Args:
+        gear1_name: First item name
+        gear1_brand: First item brand
+        gear2_name: Second item name
+        gear2_brand: Second item brand
+        compatibility_type: Type of compatibility:
+            - pairs_well: Items work well together
+            - incompatible: Items don't work well together
+            - requires: First item requires/needs second item
+            - enhances: First item enhances second item's performance
+        notes: Explanation of the compatibility relationship
+        source_url: Where this information was found
+
+    Returns:
+        True if successful
+    """
+    # Map compatibility types to relationship types
+    rel_type_map = {
+        "pairs_well": "PAIRS_WITH",
+        "incompatible": "INCOMPATIBLE_WITH",
+        "requires": "REQUIRES",
+        "enhances": "ENHANCES",
+    }
+
+    rel_type = rel_type_map.get(compatibility_type.lower(), "PAIRS_WITH")
+
+    query = f"""
+    MATCH (g1:GearItem {{name: $name1, brand: $brand1}})
+    MATCH (g2:GearItem {{name: $name2, brand: $brand2}})
+    MERGE (g1)-[r:{rel_type}]->(g2)
+    SET r.notes = $notes,
+        r.sourceUrl = $source_url,
+        r.compatibilityType = $compat_type,
+        r.updatedAt = datetime()
+    RETURN g1.name, g2.name
+    """
+    results = execute_and_fetch(query, {
+        "name1": gear1_name,
+        "brand1": gear1_brand,
+        "name2": gear2_name,
+        "brand2": gear2_brand,
+        "notes": notes,
+        "source_url": source_url,
+        "compat_type": compatibility_type,
+    })
+    return len(results) > 0
+
+
+def get_gear_compatibility(gear_name: str, brand: str) -> list[dict]:
+    """Get all compatibility relationships for a gear item.
+
+    Args:
+        gear_name: Name of the gear item
+        brand: Brand of the gear item
+
+    Returns:
+        List of compatibility records
+    """
+    query = """
+    MATCH (g:GearItem {name: $name, brand: $brand})
+    OPTIONAL MATCH (g)-[r1:PAIRS_WITH]->(p1:GearItem)
+    OPTIONAL MATCH (g)-[r2:INCOMPATIBLE_WITH]->(p2:GearItem)
+    OPTIONAL MATCH (g)-[r3:REQUIRES]->(p3:GearItem)
+    OPTIONAL MATCH (g)-[r4:ENHANCES]->(p4:GearItem)
+    WITH g,
+         collect(DISTINCT {item: p1.name, brand: p1.brand, type: 'pairs_well', notes: r1.notes}) as pairs,
+         collect(DISTINCT {item: p2.name, brand: p2.brand, type: 'incompatible', notes: r2.notes}) as incompatible,
+         collect(DISTINCT {item: p3.name, brand: p3.brand, type: 'requires', notes: r3.notes}) as requires,
+         collect(DISTINCT {item: p4.name, brand: p4.brand, type: 'enhances', notes: r4.notes}) as enhances
+    RETURN pairs + incompatible + requires + enhances as compatibility
+    """
+    results = execute_and_fetch(query, {"name": gear_name, "brand": brand})
+    if results and results[0].get("compatibility"):
+        return [c for c in results[0]["compatibility"] if c.get("item")]
+    return []
+
+
+# ============================================================================
+# General Insights (Non-product-specific knowledge)
+# ============================================================================
+
+
+def save_insight(
+    summary: str,
+    content: str,
+    category: str,
+    source_url: Optional[str] = None,
+    related_gear: Optional[list[tuple[str, str]]] = None,
+) -> bool:
+    """Save a general insight (non-product-specific knowledge).
+
+    Args:
+        summary: Short summary/title of the insight
+        content: Full content of the insight
+        category: Category of insight:
+            - Material Knowledge
+            - Technique
+            - Trail Wisdom
+            - Weather/Climate
+            - Gear Philosophy
+            - Weight Optimization
+            - Safety
+            - Maintenance
+        source_url: Where this insight was found
+        related_gear: Optional list of (name, brand) tuples to link to
+
+    Returns:
+        True if successful
+    """
+    query = """
+    MERGE (i:Insight {summary: $summary})
+    ON CREATE SET
+        i.content = $content,
+        i.category = $category,
+        i.sourceUrl = $source_url,
+        i.createdAt = datetime()
+    ON MATCH SET
+        i.content = $content,
+        i.category = $category,
+        i.sourceUrl = COALESCE($source_url, i.sourceUrl),
+        i.updatedAt = datetime()
+    RETURN i.summary
+    """
+    success = execute_cypher(query, {
+        "summary": summary,
+        "content": content,
+        "category": category,
+        "source_url": source_url,
+    })
+
+    # Link to related gear if specified
+    if success and related_gear:
+        for gear_name, gear_brand in related_gear:
+            link_query = """
+            MATCH (i:Insight {summary: $summary})
+            MATCH (g:GearItem {name: $gear_name, brand: $gear_brand})
+            MERGE (g)-[:RELATES_TO_INSIGHT]->(i)
+            """
+            execute_cypher(link_query, {
+                "summary": summary,
+                "gear_name": gear_name,
+                "gear_brand": gear_brand,
+            })
+
+    return success
+
+
+def get_insights(category: Optional[str] = None, limit: int = 50) -> list[dict]:
+    """Get all insights, optionally filtered by category.
+
+    Args:
+        category: Optional category filter
+        limit: Maximum number of results
+
+    Returns:
+        List of insight records
+    """
+    if category:
+        query = """
+        MATCH (i:Insight)
+        WHERE i.category = $category
+        RETURN i.summary as summary, i.content as content,
+               i.category as category, i.sourceUrl as source_url
+        ORDER BY i.createdAt DESC
+        LIMIT $limit
+        """
+        return execute_and_fetch(query, {"category": category, "limit": limit})
+    else:
+        query = """
+        MATCH (i:Insight)
+        RETURN i.summary as summary, i.content as content,
+               i.category as category, i.sourceUrl as source_url
+        ORDER BY i.createdAt DESC
+        LIMIT $limit
+        """
+        return execute_and_fetch(query, {"limit": limit})
+
+
+def search_insights(query_text: str, limit: int = 20) -> list[dict]:
+    """Search insights by content.
+
+    Args:
+        query_text: Search text
+        limit: Maximum results
+
+    Returns:
+        List of matching insights
+    """
+    query = """
+    MATCH (i:Insight)
+    WHERE toLower(i.content) CONTAINS toLower($query)
+       OR toLower(i.summary) CONTAINS toLower($query)
+    RETURN i.summary as summary, i.content as content,
+           i.category as category, i.sourceUrl as source_url
+    LIMIT $limit
+    """
+    return execute_and_fetch(query, {"query": query_text, "limit": limit})
+
+
+# ============================================================================
+# Product Type / Category Hierarchy
+# ============================================================================
+
+
+def assign_product_type(
+    gear_name: str,
+    brand: str,
+    product_type: str,
+    source_url: Optional[str] = None,
+) -> bool:
+    """Assign a product type to a gear item for category hierarchy.
+
+    Creates or links to a ProductType node for hierarchical categorization.
+
+    Example product types:
+        - Tent -> Trekking Pole Tent, Freestanding Tent, Tarp
+        - Sleeping Bag -> Quilt, Mummy Bag, Semi-Rectangular
+        - Backpack -> Frameless, Framed, Ultralight
+        - Cookware -> Canister Stove, Alcohol Stove, Wood Stove
+
+    Args:
+        gear_name: Name of the gear item
+        brand: Brand of the gear item
+        product_type: The specific product type (e.g., "Trekking Pole Tent")
+        source_url: Where this classification was found
+
+    Returns:
+        True if successful
+    """
+    query = """
+    MATCH (g:GearItem {name: $name, brand: $brand})
+    MERGE (pt:ProductType {name: $product_type})
+    MERGE (g)-[r:IS_TYPE]->(pt)
+    SET r.sourceUrl = $source_url,
+        r.updatedAt = datetime()
+    RETURN g.name, pt.name
+    """
+    results = execute_and_fetch(query, {
+        "name": gear_name,
+        "brand": brand,
+        "product_type": product_type,
+        "source_url": source_url,
+    })
+    return len(results) > 0
+
+
+def get_product_types() -> list[dict]:
+    """Get all product types with counts.
+
+    Returns:
+        List of product types with item counts
+    """
+    query = """
+    MATCH (pt:ProductType)<-[:IS_TYPE]-(g:GearItem)
+    RETURN pt.name as product_type, count(g) as item_count
+    ORDER BY item_count DESC
+    """
+    return execute_and_fetch(query)
+
+
+def get_gear_by_product_type(product_type: str) -> list[dict]:
+    """Get all gear items of a specific product type.
+
+    Args:
+        product_type: The product type to filter by
+
+    Returns:
+        List of gear items
+    """
+    query = """
+    MATCH (g:GearItem)-[:IS_TYPE]->(pt:ProductType {name: $product_type})
+    RETURN g.name as name, g.brand as brand, g.category as category,
+           g.weight_grams as weight_grams, g.price_usd as price_usd
+    ORDER BY g.name
+    """
+    return execute_and_fetch(query, {"product_type": product_type})
+
+
+# ============================================================================
+# Weather Performance / Temperature Range
+# ============================================================================
+
+
+def save_weather_performance(
+    gear_name: str,
+    brand: str,
+    weather_type: str,
+    performance_rating: str,
+    notes: Optional[str] = None,
+    source_url: Optional[str] = None,
+) -> bool:
+    """Save how gear performs in specific weather conditions.
+
+    Args:
+        gear_name: Name of the gear item
+        brand: Brand of the gear item
+        weather_type: Type of weather (rain, snow, wind, heat, cold, humidity)
+        performance_rating: How well it performs (excellent, good, fair, poor)
+        notes: Additional context about performance
+        source_url: Where this was mentioned
+
+    Returns:
+        True if successful
+    """
+    query = """
+    MATCH (g:GearItem {name: $name, brand: $brand})
+    MERGE (w:WeatherCondition {type: $weather_type})
+    MERGE (g)-[r:PERFORMS_IN]->(w)
+    SET r.rating = $rating,
+        r.notes = $notes,
+        r.sourceUrl = $source_url,
+        r.updatedAt = datetime()
+    RETURN g.name, w.type
+    """
+    results = execute_and_fetch(query, {
+        "name": gear_name,
+        "brand": brand,
+        "weather_type": weather_type,
+        "rating": performance_rating,
+        "notes": notes,
+        "source_url": source_url,
+    })
+    return len(results) > 0
+
+
+def save_temperature_range(
+    gear_name: str,
+    brand: str,
+    min_temp_c: Optional[float] = None,
+    max_temp_c: Optional[float] = None,
+    comfort_temp_c: Optional[float] = None,
+    notes: Optional[str] = None,
+    source_url: Optional[str] = None,
+) -> bool:
+    """Save temperature range information for gear.
+
+    Args:
+        gear_name: Name of the gear item
+        brand: Brand of the gear item
+        min_temp_c: Minimum usable temperature (Celsius)
+        max_temp_c: Maximum usable temperature (Celsius)
+        comfort_temp_c: Comfort rating temperature (Celsius)
+        notes: Additional context
+        source_url: Where this was mentioned
+
+    Returns:
+        True if successful
+    """
+    set_parts = []
+    params = {
+        "name": gear_name,
+        "brand": brand,
+    }
+
+    if min_temp_c is not None:
+        set_parts.append("g.minTempC = $min_temp")
+        params["min_temp"] = min_temp_c
+    if max_temp_c is not None:
+        set_parts.append("g.maxTempC = $max_temp")
+        params["max_temp"] = max_temp_c
+    if comfort_temp_c is not None:
+        set_parts.append("g.comfortTempC = $comfort_temp")
+        params["comfort_temp"] = comfort_temp_c
+    if notes:
+        set_parts.append("g.tempNotes = $notes")
+        params["notes"] = notes
+    if source_url:
+        set_parts.append("g.tempSourceUrl = $source_url")
+        params["source_url"] = source_url
+
+    if not set_parts:
+        return False
+
+    query = f"""
+    MATCH (g:GearItem {{name: $name, brand: $brand}})
+    SET {', '.join(set_parts)}
+    RETURN g.name
+    """
+    results = execute_and_fetch(query, params)
+    return len(results) > 0
+
+
+def get_gear_by_temperature(temp_c: float, tolerance: float = 5.0) -> list[dict]:
+    """Find gear suitable for a specific temperature.
+
+    Args:
+        temp_c: Target temperature (Celsius)
+        tolerance: Temperature tolerance for matching
+
+    Returns:
+        List of suitable gear items
+    """
+    query = """
+    MATCH (g:GearItem)
+    WHERE (g.minTempC IS NULL OR g.minTempC <= $temp + $tolerance)
+      AND (g.maxTempC IS NULL OR g.maxTempC >= $temp - $tolerance)
+    RETURN g.name as name, g.brand as brand, g.category as category,
+           g.minTempC as min_temp, g.maxTempC as max_temp,
+           g.comfortTempC as comfort_temp, g.tempNotes as notes
+    ORDER BY g.category, g.name
+    """
+    return execute_and_fetch(query, {"temp": temp_c, "tolerance": tolerance})

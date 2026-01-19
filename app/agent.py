@@ -35,6 +35,9 @@ from app.tools.web_scraper import (
     discover_catalog,
     quick_count_products,
     verify_brand_product,
+    discover_reseller_catalog,
+    extract_reseller_product,
+    smart_discover_catalog,
 )
 from app.tools.geargraph import (
     find_similar_gear,
@@ -57,6 +60,19 @@ from app.tools.geargraph import (
     link_gear_to_term,
     find_gear_with_term,
     import_glossary_from_json,
+    # Rich relationship tools
+    track_field_source,
+    save_product_opinion,
+    save_recommended_usage,
+    # NEW: Rich knowledge & relationship tools (Knowledge Graph Enhancement)
+    save_gear_compatibility_tool,
+    get_gear_compatibility_tool,
+    search_insights_tool,
+    assign_product_type_tool,
+    list_product_types,
+    save_weather_performance_tool,
+    save_temperature_range_tool,
+    find_gear_for_temperature,
 )
 
 load_dotenv()
@@ -70,6 +86,7 @@ LLM_PROVIDER: LLMProvider = os.getenv("LLM_PROVIDER", "deepseek").lower()  # typ
 
 # DeepSeek models (very cost-effective: ~$0.14/M input, $0.28/M output)
 # Note: deepseek-reasoner doesn't support tool calls, so we use deepseek-chat for all tiers
+# DeepSeek max_tokens limit is 8192
 DEEPSEEK_MODELS = {
     "haiku": DeepSeek(
         id="deepseek-chat",
@@ -81,7 +98,7 @@ DEEPSEEK_MODELS = {
     ),
     "opus": DeepSeek(
         id="deepseek-chat",  # deepseek-reasoner doesn't support tool calls
-        max_tokens=16384,
+        max_tokens=8192,  # DeepSeek max is 8192
     ),
 }
 
@@ -719,6 +736,451 @@ def import_lighterpack_list(url: str, auto_research: bool = True) -> str:
         return f"Error importing LighterPack list: {str(e)}"
 
 
+def discover_reseller_site(category_base_url: str, max_categories: int = 50) -> str:
+    """Discover products on a RESELLER/RETAILER website by crawling category structure.
+
+    **USE THIS TOOL FOR RESELLER SITES** like:
+    - 360-outdoor.de (German outdoor retailer)
+    - bergfreunde.de (German outdoor shop)
+    - Any multi-brand retailer with category pages
+
+    This is different from `discover_manufacturer_catalog` which is for single-brand
+    manufacturer sites. Reseller sites:
+    - Carry products from MULTIPLE brands
+    - Have hierarchical category structures (/kategorie/ausruestung/isomatten/)
+    - Individual product pages with brand info (/produkt/brand-product-name/)
+
+    **How to identify the category base URL:**
+    - Look for URLs like /kategorie/, /category/, /product-category/
+    - Example: https://360-outdoor.de/kategorie/
+
+    Args:
+        category_base_url: Base URL for categories (e.g., https://360-outdoor.de/kategorie/)
+        max_categories: Maximum categories to crawl (default: 50)
+
+    Returns:
+        Catalog overview with categories and product counts
+    """
+    try:
+        result = discover_reseller_catalog(category_base_url, max_categories=max_categories)
+
+        output = [f"# {result.get('site_name', 'Reseller')} Product Catalog\n"]
+        output.append(f"**Category Base URL:** {result['category_base_url']}")
+        output.append(f"**Product Base URL:** {result.get('product_base_url', 'Auto-detected')}")
+        output.append(f"**Total Categories:** {result['total_categories']}")
+        output.append(f"**Total Products Found:** {result['total_products_found']}\n")
+
+        output.append("---\n")
+        output.append("## Categories Found\n")
+
+        categories = result.get('categories', [])
+        if categories:
+            for i, cat in enumerate(categories, 1):
+                cat_name = cat.get('category_name', f'Category {i}')
+                count = cat.get('product_count', 0)
+                url = cat.get('url', '')
+                subcats = cat.get('subcategory_count', 0)
+
+                output.append(f"### {i}. {cat_name} ({count} products)")
+                output.append(f"   URL: {url}")
+
+                if subcats > 0:
+                    output.append(f"   Subcategories: {subcats}")
+
+                # Show sample product URLs
+                product_urls = cat.get('product_urls', [])
+                if product_urls:
+                    output.append(f"   Sample products:")
+                    for purl in product_urls[:3]:
+                        output.append(f"   - {purl}")
+
+                output.append("")
+        else:
+            output.append("No categories found.")
+
+        # Show sample of all product URLs
+        all_products = result.get('all_product_urls', [])
+        if all_products:
+            output.append("---\n")
+            output.append(f"## All Product URLs ({len(all_products)} total)\n")
+            output.append("Sample of discovered product pages:")
+            for url in all_products[:20]:
+                output.append(f"- {url}")
+            if len(all_products) > 20:
+                output.append(f"... and {len(all_products) - 20} more")
+
+        output.append("\n---\n")
+        output.append("## Next Steps\n")
+        output.append("1. Select categories or product URLs to extract")
+        output.append("2. Use `extract_reseller_product_page(url)` to extract individual products")
+        output.append("3. For each product, verify brand and save to database")
+
+        return "\n".join(output)
+
+    except ValueError as e:
+        return f"Error discovering reseller catalog: {str(e)}"
+
+
+def extract_reseller_product_page(url: str) -> str:
+    """Extract product details from a RESELLER product page.
+
+    Use this for individual product pages on reseller/retailer sites.
+    Unlike manufacturer extraction, this:
+    - Extracts BRAND information (resellers carry multiple brands)
+    - Handles German/EU product pages
+    - Works with WooCommerce, Shopify, and other platforms
+
+    Args:
+        url: Product page URL (e.g., https://360-outdoor.de/produkt/sea-to-summit-...)
+
+    Returns:
+        Extracted product details including brand, name, price, weight
+    """
+    try:
+        data = extract_reseller_product(url)
+
+        if not data or data.get('error'):
+            return f"Could not extract product from {url}: {data.get('error', 'Unknown error')}"
+
+        output = ["## Extracted Product Data\n"]
+        output.append(f"**URL:** {url}")
+
+        if data.get('brand'):
+            output.append(f"**Brand:** {data['brand']}")
+        else:
+            output.append("**Brand:** ⚠️ Not found - verify manually!")
+
+        if data.get('name'):
+            output.append(f"**Product Name:** {data['name']}")
+
+        if data.get('price'):
+            output.append(f"**Price:** {data['price']}")
+
+        if data.get('weight_grams'):
+            output.append(f"**Weight:** {data['weight_grams']}g")
+
+        if data.get('category'):
+            output.append(f"**Category:** {data['category']}")
+
+        if data.get('description'):
+            desc = data['description'][:300] + "..." if len(data['description']) > 300 else data['description']
+            output.append(f"**Description:** {desc}")
+
+        output.append("\n---")
+        output.append("**Next steps:**")
+        output.append("1. If brand is missing/uncertain, use `verify_product_brand` to find it")
+        output.append("2. Check for duplicates with `find_similar_gear`")
+        output.append("3. Save with `save_gear_to_graph`")
+
+        return "\n".join(output)
+
+    except ValueError as e:
+        return f"Error extracting product: {str(e)}"
+
+
+def smart_discover_site(
+    url: str,
+    max_products: int = 100,
+    force_reanalyze: bool = False,
+    auto_save: bool = True,
+) -> str:
+    """**RECOMMENDED**: Intelligently discover and extract products from ANY e-commerce site.
+
+    This is the BEST tool for extracting products from websites. It uses an LLM to
+    automatically understand the site structure instead of relying on hardcoded patterns.
+
+    **How it works:**
+    1. Maps the website to discover all URLs (FREE - uses self-hosted Firecrawl)
+    2. Sends sample URLs to DeepSeek LLM to identify patterns (~$0.01)
+    3. LLM discovers product/category URL patterns automatically
+    4. Extracts products using discovered patterns (FREE)
+    5. Falls back to cloud crawl only if confidence is too low
+    6. **AUTO-SAVES** all products and insights to GearGraph (if auto_save=True)
+
+    **Why use this instead of other discovery tools?**
+    - Works with ANY e-commerce platform (Shopify, WooCommerce, custom)
+    - Handles German sites (/produkt/, /kategorie/, /kategorien/)
+    - Handles English sites (/products/, /collections/)
+    - Handles ANY custom URL structure
+    - Patterns are cached for 24 hours (instant re-runs)
+    - Very cost-effective: ~$0.01-0.02 per site
+    - **Auto-saves ALL extracted data** including weight, dimensions, features, use cases, and insights
+
+    **When to use:**
+    - Any reseller/retailer site (360-outdoor.de, REI, etc.)
+    - Any manufacturer site (Big Agnes, Zpacks, etc.)
+    - Sites where you don't know the URL structure
+    - Sites that might use non-standard patterns
+
+    Args:
+        url: Base URL of the website (e.g., https://360-outdoor.de)
+        max_products: Maximum products to extract (default: 100)
+        force_reanalyze: Skip cached patterns and re-analyze (default: False)
+        auto_save: Automatically save products and insights to GearGraph (default: True)
+
+    Returns:
+        Extraction results with products, patterns, and confidence scores
+    """
+    from app.tools.geargraph import save_gear_to_graph, save_insight_to_graph
+
+    try:
+        result = smart_discover_catalog(url, max_products=max_products, force_reanalyze=force_reanalyze)
+
+        output = [f"# Smart Site Discovery Results\n"]
+        output.append(f"**URL:** {url}")
+        output.append(f"**Platform Detected:** {result.get('platform', 'unknown')}")
+        output.append(f"**Confidence:** {result.get('confidence', 0):.1%}")
+        output.append(f"**Source:** {result.get('source', 'unknown')}")
+        output.append(f"**From Cache:** {'Yes' if result.get('from_cache') else 'No'}")
+        output.append(f"**Estimated Cost:** ${result.get('estimated_cost', 0):.4f}\n")
+
+        output.append("---\n")
+
+        # Show discovered patterns
+        patterns = result.get('patterns')
+        if patterns:
+            output.append("## Discovered URL Patterns\n")
+
+            product_patterns = patterns.get('product_patterns', [])
+            if product_patterns:
+                output.append("### Product Page Patterns:")
+                for p in product_patterns[:3]:
+                    output.append(f"- `{p.get('regex', '')}` (confidence: {p.get('confidence', 0):.0%})")
+                    if p.get('example_matches'):
+                        output.append(f"  Examples: {', '.join(p['example_matches'][:2])}")
+                output.append("")
+
+            category_patterns = patterns.get('category_patterns', [])
+            if category_patterns:
+                output.append("### Category Page Patterns:")
+                for p in category_patterns[:3]:
+                    output.append(f"- `{p.get('regex', '')}` (confidence: {p.get('confidence', 0):.0%})")
+                output.append("")
+
+            if patterns.get('analysis_notes'):
+                output.append(f"**Analysis Notes:** {patterns['analysis_notes']}\n")
+
+        output.append("---\n")
+
+        # Show extraction stats
+        stats = result.get('stats', {})
+        output.append("## Extraction Statistics\n")
+        output.append(f"**Products Found:** {result.get('product_count', 0)}")
+        if stats:
+            output.append(f"**Scrape Attempts:** {stats.get('scrape_attempts', 0)}")
+            output.append(f"**Scrape Failures:** {stats.get('scrape_failures', 0)}")
+        output.append("")
+
+        # Auto-save products and insights to GearGraph with RICH RELATIONSHIPS
+        products = result.get('products', [])
+        saved_count = 0
+        failed_count = 0
+        insights_saved = 0
+        relationships_created = 0
+        failed_products = []
+
+        if auto_save and products:
+            output.append("## Auto-Save to GearGraph\n")
+            source_url_base = url  # The original URL for linking
+
+            for prod in products:
+                try:
+                    # Prepare fields for save_gear_to_graph
+                    name = prod.get('name', '')
+                    brand = prod.get('brand', prod.get('potential_brand', 'Unknown'))
+                    category = prod.get('category', 'gear')
+                    product_source_url = prod.get('source_url', source_url_base)
+
+                    if not name:
+                        continue
+
+                    # Convert lists to comma-separated strings
+                    materials = ', '.join(prod.get('materials', [])) if prod.get('materials') else None
+                    features = ', '.join(prod.get('features', [])) if prod.get('features') else None
+                    use_cases_list = prod.get('use_cases', [])
+                    use_cases = ', '.join(use_cases_list) if use_cases_list else None
+
+                    # Save the product with ALL extracted data
+                    save_result = save_gear_to_graph(
+                        name=name,
+                        brand=brand,
+                        category=category,
+                        weight_grams=prod.get('weight_grams'),
+                        price_usd=prod.get('price'),
+                        source_url=product_source_url,
+                        description=prod.get('description'),
+                        materials=materials,
+                        features=features,
+                        dimensions=prod.get('dimensions'),
+                        use_cases=use_cases,
+                        currency=prod.get('currency'),
+                    )
+
+                    if "Successfully" in save_result:
+                        saved_count += 1
+
+                        # CREATE RICH RELATIONSHIPS
+
+                        # 1. Link product to source URL
+                        link_result = link_extracted_gear_to_source(name, brand, product_source_url)
+                        if "Linked" in link_result:
+                            relationships_created += 1
+
+                        # 2. Track field provenance for extracted data
+                        extracted_fields = []
+                        if prod.get('weight_grams'):
+                            extracted_fields.append('weight_grams')
+                        if prod.get('price'):
+                            extracted_fields.append('price_usd')
+                        if prod.get('description'):
+                            extracted_fields.append('description')
+                        if prod.get('materials'):
+                            extracted_fields.append('materials')
+                        if prod.get('features'):
+                            extracted_fields.append('features')
+                        if prod.get('dimensions'):
+                            extracted_fields.append('dimensions')
+
+                        for field in extracted_fields:
+                            track_field_source(name, brand, field, product_source_url, confidence=0.8)
+                            relationships_created += 1
+
+                        # 3. Save usage contexts as separate nodes
+                        if use_cases_list:
+                            for use_case in use_cases_list[:5]:  # Limit to 5 use cases
+                                if use_case and len(use_case) > 3:
+                                    # Determine context type
+                                    use_case_lower = use_case.lower()
+                                    if any(w in use_case_lower for w in ['hike', 'trek', 'climb', 'camp', 'backpack']):
+                                        context_type = 'activity'
+                                    elif any(w in use_case_lower for w in ['rain', 'snow', 'cold', 'hot', 'wet']):
+                                        context_type = 'weather'
+                                    elif any(w in use_case_lower for w in ['rock', 'sand', 'mud', 'alpine']):
+                                        context_type = 'terrain'
+                                    else:
+                                        context_type = 'activity'
+
+                                    usage_result = save_recommended_usage(
+                                        name, brand, context_type, use_case, product_source_url
+                                    )
+                                    if "Saved" in usage_result:
+                                        relationships_created += 1
+
+                        # 4. Save pros/cons as opinions if available
+                        pros = prod.get('pros', [])
+                        cons = prod.get('cons', [])
+
+                        for pro in pros[:3]:  # Limit to 3 pros
+                            if pro:
+                                save_product_opinion(
+                                    name, brand, 'pro', pro,
+                                    sentiment='positive', source_url=product_source_url
+                                )
+                                relationships_created += 1
+
+                        for con in cons[:3]:  # Limit to 3 cons
+                            if con:
+                                save_product_opinion(
+                                    name, brand, 'con', con,
+                                    sentiment='negative', source_url=product_source_url
+                                )
+                                relationships_created += 1
+
+                        # Save insights separately
+                        insights = prod.get('insights', [])
+                        for insight in insights:
+                            if insight:
+                                insight_result = save_insight_to_graph(
+                                    summary=f"Insight about {name}",
+                                    content=insight,
+                                    category="Product Knowledge",
+                                    related_product=name,
+                                    source_url=product_source_url,
+                                )
+                                if "Successfully" in insight_result:
+                                    insights_saved += 1
+                                    relationships_created += 1
+                    else:
+                        # Save failed - track it
+                        failed_count += 1
+                        failed_products.append({
+                            'name': name,
+                            'brand': brand,
+                            'error': save_result
+                        })
+                        logger.error(f"SAVE FAILED for {name} by {brand}: {save_result}")
+
+                except Exception as e:
+                    failed_count += 1
+                    failed_products.append({
+                        'name': prod.get('name', 'unknown'),
+                        'brand': prod.get('brand', 'unknown'),
+                        'error': str(e)
+                    })
+                    logger.error(f"Exception saving product {prod.get('name', 'unknown')}: {e}")
+
+            output.append(f"**Products Saved:** {saved_count}/{len(products)}")
+            if failed_count > 0:
+                output.append(f"**Products FAILED:** {failed_count}")
+            output.append(f"**Insights Saved:** {insights_saved}")
+            output.append(f"**Relationships Created:** {relationships_created}")
+
+            # Show failed products if any
+            if failed_products:
+                output.append("\n### Failed Saves (NEEDS ATTENTION)")
+                for fp in failed_products[:10]:  # Show first 10 failures
+                    output.append(f"- **{fp['name']}** by {fp['brand']}: {fp['error'][:100]}...")
+                if len(failed_products) > 10:
+                    output.append(f"... and {len(failed_products) - 10} more failures")
+                output.append("\n**Check database connection and logs for details.**")
+
+            output.append("")
+
+        # Show extracted products
+        if products:
+            output.append("## Extracted Products\n")
+            for i, prod in enumerate(products[:20], 1):
+                name = prod.get('name', 'Unknown')
+                brand = prod.get('potential_brand', '')
+                price = prod.get('price', '')
+                weight = prod.get('weight_grams', '')
+
+                output.append(f"### {i}. {brand} {name}" if brand else f"### {i}. {name}")
+                if price:
+                    output.append(f"**Price:** {price}")
+                if weight:
+                    output.append(f"**Weight:** {weight}g")
+                output.append(f"**URL:** {prod.get('source_url', '')}")
+                output.append("")
+
+            if len(products) > 20:
+                output.append(f"... and {len(products) - 20} more products\n")
+        else:
+            output.append("No products extracted. Check the patterns and confidence scores.\n")
+
+        output.append("---\n")
+        output.append("## Next Steps\n")
+        if auto_save:
+            output.append("Products have been **automatically saved** to GearGraph with all extracted data:")
+            output.append("- Weight, dimensions, materials, features, use cases")
+            output.append("- Insights saved as separate knowledge nodes")
+            output.append("")
+            output.append("To verify or enhance:")
+            output.append("1. Use `find_similar_gear` to check for potential duplicates")
+            output.append("2. Use `verify_product_brand` for products with uncertain brands")
+            output.append("3. Use Graph Explorer to review saved data")
+        else:
+            output.append("1. Review the extracted products for accuracy")
+            output.append("2. Use `verify_product_brand` for uncertain brands")
+            output.append("3. Use `find_similar_gear` to check for duplicates")
+            output.append("4. Use `save_gear_to_graph` to save verified products")
+
+        return "\n".join(output)
+
+    except ValueError as e:
+        return f"Error with smart discovery: {str(e)}"
+
+
 # All available tools for agents
 AGENT_TOOLS = [
     # Content fetching tools
@@ -750,9 +1212,14 @@ AGENT_TOOLS = [
     discover_product_pages,  # Map manufacturer sites to find product URLs
     extract_gear_from_page,  # Extract structured data from single product page
     extract_gear_list_page,  # Extract ALL products from list/guide pages
-    # Two-phase catalog extraction tools
+    # Two-phase catalog extraction tools (for MANUFACTURER sites)
     discover_manufacturer_catalog,  # Phase 1: Discover catalog structure and count products
     extract_category_products,  # Phase 2: Extract all products from selected category
+    # Reseller/Retailer site crawl tools (for MULTI-BRAND sites)
+    discover_reseller_site,  # Discover reseller catalog by crawling category hierarchy
+    extract_reseller_product_page,  # Extract product with brand from reseller page
+    # Smart LLM-driven extraction (RECOMMENDED for any site)
+    smart_discover_site,  # Use LLM to analyze site structure and extract products
     # Glossary tools
     save_glossary_term,
     lookup_glossary_term,
@@ -760,6 +1227,27 @@ AGENT_TOOLS = [
     link_gear_to_term,
     find_gear_with_term,
     import_glossary_from_json,
+    # ========================================================================
+    # KNOWLEDGE GRAPH ENHANCEMENT TOOLS (Rich Relationships & Insights)
+    # ========================================================================
+    # Field provenance tracking
+    track_field_source,  # Track where each data field came from (confidence, source)
+    # Opinions & Reviews (Experiences, Tips, Warnings, Pros, Cons)
+    save_product_opinion,  # Save experiences, tips, warnings, pros, cons
+    # Usage context (terrain, weather, activity, skill_level, trip_type)
+    save_recommended_usage,  # Save recommended usage contexts
+    # Gear compatibility (pairs_well, incompatible, requires, enhances)
+    save_gear_compatibility_tool,  # What gear works together (or doesn't)
+    get_gear_compatibility_tool,  # Query compatibility relationships
+    # General insights (non-product-specific trail wisdom)
+    search_insights_tool,  # Search existing insights
+    # Product type hierarchy (fine-grained categorization)
+    assign_product_type_tool,  # Assign specific product types (e.g., "Trekking Pole Tent")
+    list_product_types,  # List all product types in database
+    # Weather performance & temperature ranges
+    save_weather_performance_tool,  # How gear performs in rain/snow/wind/heat/cold
+    save_temperature_range_tool,  # Temperature range for sleeping bags, quilts, etc.
+    find_gear_for_temperature,  # Find gear suitable for specific temperature
 ]
 
 
@@ -969,6 +1457,12 @@ TOOL_DISPLAY_NAMES = {
     "search_images": "Searching for images",
     "save_glossary_term": "Saving glossary term",
     "lookup_glossary_term": "Looking up glossary term",
+    "discover_reseller_site": "Discovering reseller catalog",
+    "extract_reseller_product_page": "Extracting reseller product",
+    "discover_reseller_catalog": "Crawling reseller categories",
+    "extract_reseller_product": "Extracting product from reseller page",
+    "smart_discover_site": "Smart analyzing site structure",
+    "smart_discover_catalog": "LLM-driven catalog discovery",
 }
 
 

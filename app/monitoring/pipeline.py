@@ -172,8 +172,56 @@ class PlaylistMonitor:
         Raises:
             Exception: If processing fails
         """
-        # Use the agent to process the video
-        message = f"Please extract all gear information from this YouTube video: {video['url']}"
+        # Use the agent to process the video with a comprehensive extraction prompt
+        message = f"""# Wissens-Extraktion aus YouTube-Video
+
+**Video:** {video['title']}
+**URL:** {video['url']}
+
+## DEINE AUFGABE: Extrahiere ALLES wertvolle Wissen!
+
+Der GearGraph ist ein **WISSENS-GRAPH**, nicht nur eine Produktdatenbank!
+Priorisiere in dieser Reihenfolge:
+
+### 1. WISSEN & ERFAHRUNGEN (Höchste Priorität!)
+- **Praxis-Erfahrungen**: "Nach 500 Meilen auf dem Trail..." → `save_product_opinion(type="experience")`
+- **Tipps & Tricks**: "Pro-Tipp: Kombiniere X mit Y..." → `save_product_opinion(type="tip")`
+- **Warnungen**: "Achtung bei Temperaturen unter..." → `save_product_opinion(type="warning")`
+- **Pros/Cons**: Jedes erwähnte Pro/Contra → `save_product_opinion(type="pro/con")`
+- **Allgemeine Insights**: "Beim Ultralight gilt..." → `save_insight_to_graph()`
+
+### 2. BEZIEHUNGEN & KONTEXT (Zweite Priorität!)
+- **Einsatzkontexte**: Wann/wo funktioniert das Gear? → `save_recommended_usage()`
+- **Vergleiche**: Wenn Produkte verglichen werden → `save_product_comparison()`
+- **Alternativen**: Budget-Optionen, Ersatzprodukte → `save_product_alternative()`
+- **Kompatibilität**: Was passt zusammen? → `save_gear_compatibility()`
+
+### 3. PRODUKTDATEN (Dritte Priorität)
+- **Duplikat-Check ZUERST**: `find_similar_gear(name, brand)`
+- **Brand verifizieren**: `verify_product_brand()` bei Audio-Quellen
+- **Speichern**: `save_gear_to_graph()` mit ALLEN verfügbaren Specs
+- **Verlinken**: `link_extracted_gear_to_source()`
+
+### 4. PROVENIENZ
+- Für jedes Feld: `track_field_source()` mit Confidence-Score
+
+### 5. ABSCHLUSS (PFLICHT!)
+Rufe am Ende UNBEDINGT auf:
+```
+save_extraction_result(
+    url="{video['url']}",
+    title="{video['title']}",
+    channel="...",  # Aus dem Video
+    gear_items_found=X,
+    insights_found=Y,
+    extraction_summary="..."  # Markdown-Zusammenfassung
+)
+```
+
+**WICHTIG:** Jede Erfahrung, jeder Tipp, jede Warnung ist wertvoll!
+Der GearGraph wird durch dein extrahiertes Wissen klüger!
+
+Beginne jetzt mit der Extraktion."""
 
         result = run_agent_chat(message)
 

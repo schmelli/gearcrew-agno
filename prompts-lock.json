@@ -2,14 +2,19 @@
   "lockfileVersion": 1,
   "prompts": {
     "gear-extractor": {
-      "version": 8,
-      "versionId": "TMlokXJoszZZZ06joOR0n",
+      "version": 9,
+      "versionId": "_w2XLR6N7M8ueusFzkXGg",
       "materialized": "prompts/gear-extractor.prompt.yaml"
     },
     "hygiene-evaluator": {
-      "version": 1,
-      "versionId": "prompt_version_57Wx1BUzxyLgP0fcyE9HC",
+      "version": 2,
+      "versionId": "Gpjo6X4QTxdCa2EDlrrOb",
       "materialized": "prompts/hygiene-evaluator.prompt.yaml"
+    },
+    "site-analyzer": {
+      "version": 1,
+      "versionId": "prompt_version_fA749be5m11j1hru-8UHE",
+      "materialized": "prompts/site-analyzer.prompt.yaml"
     }
   }
 }
