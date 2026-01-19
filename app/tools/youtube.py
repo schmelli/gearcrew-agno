@@ -177,3 +177,54 @@ def get_playlist_info(playlist_url: str) -> dict:
 
     except Exception as e:
         raise ValueError(f"Error fetching playlist info: {str(e)}")
+
+
+def get_video_details(url_or_id: str) -> dict:
+    """Fetch full video details including description.
+
+    This is CRITICAL for gear extraction because:
+    - Video descriptions often contain complete gear lists with links
+    - Affiliate links reveal exact product names and brands
+    - Timestamps in descriptions help locate gear mentions
+
+    Args:
+        url_or_id: YouTube video URL or ID
+
+    Returns:
+        Dict with: video_id, title, description, channel, duration,
+                   upload_date, view_count, like_count, tags
+
+    Raises:
+        ValueError: If video cannot be fetched
+    """
+    video_id = extract_video_id(url_or_id)
+    if not video_id:
+        raise ValueError(f"Could not extract video ID from: {url_or_id}")
+
+    video_url = f"https://www.youtube.com/watch?v={video_id}"
+
+    ydl_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        # Don't use extract_flat - we want FULL metadata including description
+    }
+
+    try:
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(video_url, download=False)
+
+            return {
+                "video_id": video_id,
+                "title": info.get("title", "Unknown"),
+                "description": info.get("description", ""),
+                "channel": info.get("channel") or info.get("uploader", "Unknown"),
+                "duration": info.get("duration"),
+                "upload_date": info.get("upload_date"),
+                "view_count": info.get("view_count"),
+                "like_count": info.get("like_count"),
+                "tags": info.get("tags", []),
+            }
+
+    except Exception as e:
+        raise ValueError(f"Error fetching video details for {video_id}: {str(e)}")

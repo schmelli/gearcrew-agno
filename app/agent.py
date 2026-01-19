@@ -23,6 +23,7 @@ from app.tools.youtube import (
     get_youtube_transcript,
     get_playlist_videos,
     get_playlist_info,
+    get_video_details,
 )
 from app.tools.lighterpack_importer import import_lighterpack_sync
 from app.tools.web_scraper import (
@@ -201,6 +202,64 @@ def fetch_youtube_transcript(video_url: str) -> str:
         return get_youtube_transcript(video_url, languages=["en", "de"])
     except ValueError as e:
         return f"Error fetching transcript: {str(e)}"
+
+
+def fetch_video_details(video_url: str) -> str:
+    """Fetch FULL video details including the DESCRIPTION.
+
+    CRITICAL: Always use this BEFORE processing a video!
+    The video description often contains:
+    - Complete gear lists with brand names and product links
+    - Affiliate links that reveal exact product names
+    - Weight/spec information
+    - Timestamps pointing to gear mentions
+
+    This is ESSENTIAL for comprehensive gear extraction because:
+    - Transcripts often miss brand names (audio transcription errors)
+    - Descriptions have structured gear lists
+    - Links reveal exact products (not guessed from audio)
+
+    Args:
+        video_url: YouTube video URL or ID
+
+    Returns:
+        Formatted video details including the full description
+    """
+    try:
+        details = get_video_details(video_url)
+
+        output = [f"## Video: {details['title']}"]
+        output.append(f"**Channel:** {details['channel']}")
+
+        if details.get('duration'):
+            mins = details['duration'] // 60
+            secs = details['duration'] % 60
+            output.append(f"**Duration:** {mins}:{secs:02d}")
+
+        if details.get('upload_date'):
+            date = details['upload_date']
+            output.append(f"**Upload Date:** {date[:4]}-{date[4:6]}-{date[6:]}")
+
+        if details.get('view_count'):
+            output.append(f"**Views:** {details['view_count']:,}")
+
+        if details.get('tags'):
+            output.append(f"**Tags:** {', '.join(details['tags'][:20])}")
+
+        output.append("\n### DESCRIPTION (IMPORTANT - Check for gear lists!):\n")
+        output.append(details.get('description', 'No description available'))
+
+        output.append("\n---")
+        output.append("**TIP:** Parse the description for:")
+        output.append("- Gear item names and brands")
+        output.append("- Product links (Amazon, manufacturer sites)")
+        output.append("- Weight/spec information")
+        output.append("- Base weight totals")
+
+        return "\n".join(output)
+
+    except ValueError as e:
+        return f"Error fetching video details: {str(e)}"
 
 
 def fetch_youtube_playlist(playlist_url: str) -> str:
@@ -1185,6 +1244,7 @@ def smart_discover_site(
 AGENT_TOOLS = [
     # Content fetching tools
     fetch_youtube_transcript,
+    fetch_video_details,  # CRITICAL: Fetch video description - often has complete gear lists!
     fetch_youtube_playlist,  # Fetch playlist and check which videos need processing
     fetch_webpage_content,
     search_gear_info,

@@ -4,7 +4,7 @@ import os
 from typing import Optional
 from datetime import datetime
 
-from app.tools.youtube import get_playlist_videos, get_playlist_info
+from app.tools.youtube import get_playlist_videos, get_playlist_info, get_video_details
 from app.monitoring.tracker import VideoTracker
 from app.monitoring.notifier import EmailNotifier
 from app.agent import run_agent_chat
@@ -172,16 +172,48 @@ class PlaylistMonitor:
         Raises:
             Exception: If processing fails
         """
+        # Fetch full video details INCLUDING DESCRIPTION (critical for gear lists!)
+        video_details = None
+        description_text = ""
+        try:
+            video_details = get_video_details(video['url'])
+            description_text = video_details.get('description', '')
+            print(f"  📝 Video description: {len(description_text)} chars")
+        except Exception as e:
+            print(f"  ⚠️ Could not fetch video details: {e}")
+
         # Use the agent to process the video with a comprehensive extraction prompt
         message = f"""# Wissens-Extraktion aus YouTube-Video
 
 **Video:** {video['title']}
 **URL:** {video['url']}
+**Channel:** {video.get('channel', 'Unknown')}
+
+## VIDEO-BESCHREIBUNG (WICHTIG - enthält oft vollständige Gear-Listen!):
+
+```
+{description_text[:8000] if description_text else "Keine Beschreibung verfügbar"}
+```
 
 ## DEINE AUFGABE: Extrahiere ALLES wertvolle Wissen!
 
 Der GearGraph ist ein **WISSENS-GRAPH**, nicht nur eine Produktdatenbank!
-Priorisiere in dieser Reihenfolge:
+
+### 0. VIDEO-BESCHREIBUNG PARSEN (ZUERST!)
+**Die Beschreibung oben enthält oft eine VOLLSTÄNDIGE Gear-Liste!**
+- Parse ALLE Produkte aus der Beschreibung (Brand + Produktname)
+- Links zeigen exakte Produkte (Amazon, Hersteller-Links)
+- Gewichte stehen oft dabei (z.B. "1 lb 7.6 oz")
+- Kategorien sind oft schon gegliedert (Pack, Shelter, Sleep System, etc.)
+- **JEDES Produkt aus der Beschreibung = 1x `save_gear_to_graph()`**
+
+### 0b. TRANSCRIPT HOLEN
+Rufe `fetch_youtube_transcript("{video['url']}")` auf, um das gesprochene Wort zu analysieren.
+Das Transcript enthält oft:
+- Erfahrungsberichte und Meinungen zu Produkten
+- Vergleiche zwischen verschiedenen Gear-Optionen
+- Tipps und Tricks aus der Praxis
+- Details, die nicht in der Beschreibung stehen
 
 ### 1. WISSEN & ERFAHRUNGEN (Höchste Priorität!)
 - **Praxis-Erfahrungen**: "Nach 500 Meilen auf dem Trail..." → `save_product_opinion(type="experience")`
