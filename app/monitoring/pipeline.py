@@ -207,39 +207,69 @@ Der GearGraph ist ein **WISSENS-GRAPH**, nicht nur eine Produktdatenbank!
 - Kategorien sind oft schon gegliedert (Pack, Shelter, Sleep System, etc.)
 - **JEDES Produkt aus der Beschreibung = 1x `save_gear_to_graph()`**
 
-### 0b. TRANSCRIPT HOLEN & ZWEI-PASS-VERIFIZIERUNG
-Rufe `fetch_youtube_transcript("{video['url']}")` auf, um das gesprochene Wort zu analysieren.
+### 0b. TRANSCRIPT HOLEN & ZWEI-PASS-VERIFIZIERUNG (PFLICHT!)
 
-**WICHTIG bei Videos OHNE detaillierte Beschreibung:**
-Nutze die Zwei-Pass-Verifizierung für unsichere Produkt-Erwähnungen aus dem Transcript:
+**⚠️ WICHTIG: Die Beschreibung hat nur {len(description_text)} Zeichen!**
+{"🔴 KURZE BESCHREIBUNG ERKANNT! Du MUSST die Zwei-Pass-Verifizierung für JEDES Produkt aus dem Transcript nutzen!" if len(description_text) < 1000 else "Die Beschreibung enthält möglicherweise eine Gear-Liste. Prüfe trotzdem das Transcript!"}
 
-**Pass 1: Sammle Kandidaten**
-Höre auf Produkt-Erwähnungen wie "my Zpacks Arc Blast" oder "the Gossamer Gear pack".
-ACHTUNG: Audio-Transkription macht oft Fehler bei Markennamen!
-- "gossamer here" → Gossamer Gear
-- "u l a" → ULA (Ultra Light Adventure)
-- "enlightened equipment" → Enlightened Equipment
-
-**Pass 2a: Verifiziere mit Serper**
-Für jede unsichere Erwähnung:
+**SCHRITT 1: Transcript holen (PFLICHT)**
 ```
+fetch_youtube_transcript("{video['url']}")
+```
+
+**SCHRITT 2: Produkt-Kandidaten sammeln**
+Suche im Transcript nach ALLEN Gear-Erwähnungen:
+- "my [Brand] [Product]" → Kandidat
+- "I'm using a [Product]" → Kandidat
+- "this [Product] weighs..." → Kandidat
+- Jede Marken-Erwähnung (Zpacks, Gossamer Gear, ULA, etc.) → Kandidat
+
+⚠️ ACHTUNG: Audio-Transkription macht HÄUFIG Fehler bei Markennamen!
+- "gossamer here" → Gossamer Gear
+- "u l a" / "you la" → ULA (Ultra Light Adventure)
+- "enlightened equipment" / "e e" → Enlightened Equipment
+- "hyper light" / "HMG" → Hyperlite Mountain Gear
+
+**SCHRITT 3: JEDEN Kandidaten verifizieren (PFLICHT bei kurzer Beschreibung!)**
+🔴 **Du MUSST `verify_gear_mention()` für JEDEN Produkt-Kandidaten aufrufen!**
+
+Beispiel für JEDEN gefundenen Kandidaten:
+```python
+# Kandidat 1
+verify_gear_mention(
+    product_name="Arc Blast",
+    possible_brand="Zpacks",
+    context="er nutzt ihn für lange Thru-Hikes"
+)
+
+# Kandidat 2
 verify_gear_mention(
     product_name="revelation quilt",
     possible_brand="enlightened equipment",
-    context="er sagte es sei sein liebster Quilt für 3-Jahreszeiten"
+    context="sein liebster Quilt für 3-Jahreszeiten"
 )
-```
-→ Gibt korrekten Brand/Produktnamen zurück!
 
-**Pass 2b: Hole Specs mit Firecrawl (bei kniffligen Fällen)**
-Wenn Serper das Produkt findet aber keine Specs hat:
+# ... für JEDEN weiteren Kandidaten
 ```
+
+**SCHRITT 4: Specs recherchieren (wenn Gewicht/Preis fehlt)**
+```python
 research_gear_specs(
-    product_name="Revelation Quilt",
-    brand="Enlightened Equipment"
+    product_name="Arc Blast",  # Verifizierter Name aus Schritt 3
+    brand="Zpacks"
 )
 ```
-→ Gibt Gewicht, Preis, Materialien zurück!
+
+**SCHRITT 5: Erst DANN speichern**
+Nur mit verifizierten Daten `save_gear_to_graph()` aufrufen!
+
+---
+📊 **CHECKLISTE für Transcript-Extraktion:**
+- [ ] `fetch_youtube_transcript()` aufgerufen?
+- [ ] Alle Produkt-Erwähnungen gesammelt?
+- [ ] `verify_gear_mention()` für JEDEN Kandidaten aufgerufen?
+- [ ] Bei fehlenden Specs: `research_gear_specs()` aufgerufen?
+- [ ] Nur verifizierte Produkte gespeichert?
 
 Das Transcript enthält oft:
 - Erfahrungsberichte und Meinungen zu Produkten
