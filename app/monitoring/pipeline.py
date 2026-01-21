@@ -210,66 +210,86 @@ Der GearGraph ist ein **WISSENS-GRAPH**, nicht nur eine Produktdatenbank!
 ### 0b. TRANSCRIPT HOLEN & ZWEI-PASS-VERIFIZIERUNG (PFLICHT!)
 
 **⚠️ WICHTIG: Die Beschreibung hat nur {len(description_text)} Zeichen!**
-{"🔴 KURZE BESCHREIBUNG ERKANNT! Du MUSST die Zwei-Pass-Verifizierung für JEDES Produkt aus dem Transcript nutzen!" if len(description_text) < 1000 else "Die Beschreibung enthält möglicherweise eine Gear-Liste. Prüfe trotzdem das Transcript!"}
+{"🔴 KURZE BESCHREIBUNG ERKANNT! Du MUSST die Zwei-Pass-Verifizierung nutzen!" if len(description_text) < 1000 else "Prüfe auch das Transcript für zusätzliche Produkte!"}
+
+---
+## 🚨 KRITISCHE REGEL: 95% CONFIDENCE-SCHWELLE 🚨
+
+**Für JEDES Produkt aus dem Transcript gilt:**
+- Confidence < 95% → **MUSS** `verify_gear_mention()` aufrufen!
+- Confidence ≥ 95% → Kann direkt speichern (nur bei exaktem Match)
+
+**Wann ist Confidence < 95%?** (= verify PFLICHT!)
+- ❌ Audio-Transkription (IMMER unsicher wegen Hörfehlern)
+- ❌ Markennamen ohne Produktnamen ("my Zpacks pack")
+- ❌ Produktnamen ohne Marke ("the quilt", "my tent")
+- ❌ Abkürzungen (HMG, EE, ULA, MLD, SMD)
+- ❌ Ungewöhnliche Schreibweisen im Transcript
+- ❌ Generische Begriffe ("sleeping pad", "rain jacket")
+
+**Wann ist Confidence ≥ 95%?** (= verify optional)
+- ✅ Exakter Match: "Zpacks Arc Blast" (Brand + Produktname klar)
+- ✅ In der Beschreibung mit Link bestätigt
+- ✅ Bereits im GearGraph vorhanden (find_similar_gear)
+
+---
 
 **SCHRITT 1: Transcript holen (PFLICHT)**
-```
+```python
 fetch_youtube_transcript("{video['url']}")
 ```
 
-**SCHRITT 2: Produkt-Kandidaten sammeln**
-Suche im Transcript nach ALLEN Gear-Erwähnungen:
-- "my [Brand] [Product]" → Kandidat
-- "I'm using a [Product]" → Kandidat
-- "this [Product] weighs..." → Kandidat
-- Jede Marken-Erwähnung (Zpacks, Gossamer Gear, ULA, etc.) → Kandidat
+**SCHRITT 2: Produkt-Kandidaten sammeln mit Confidence-Bewertung**
+Für JEDE Gear-Erwähnung im Transcript:
+1. Notiere: Brand (gehört/vermutet), Produkt (gehört/vermutet)
+2. Bewerte Confidence: Wie sicher bist du bei Brand UND Produkt?
+3. Bei < 95% → MUSS verifiziert werden!
 
-⚠️ ACHTUNG: Audio-Transkription macht HÄUFIG Fehler bei Markennamen!
-- "gossamer here" → Gossamer Gear
-- "u l a" / "you la" → ULA (Ultra Light Adventure)
-- "enlightened equipment" / "e e" → Enlightened Equipment
-- "hyper light" / "HMG" → Hyperlite Mountain Gear
+Typische Transcript-Fehler (alle < 95%!):
+- "gossamer here" → Gossamer Gear (Hörfehler)
+- "u l a" / "you la" → ULA
+- "e e" / "double e" → Enlightened Equipment
+- "hyper light" → Hyperlite Mountain Gear
+- "x pack" / "ex pack" → X-Pac (Material, nicht Marke!)
 
-**SCHRITT 3: JEDEN Kandidaten verifizieren (PFLICHT bei kurzer Beschreibung!)**
-🔴 **Du MUSST `verify_gear_mention()` für JEDEN Produkt-Kandidaten aufrufen!**
+**SCHRITT 3: verify_gear_mention() für JEDEN Kandidaten < 95%**
 
-Beispiel für JEDEN gefundenen Kandidaten:
+🔴 **PFLICHT: Rufe verify_gear_mention() auf für JEDEN unsicheren Kandidaten!**
+
 ```python
-# Kandidat 1
-verify_gear_mention(
-    product_name="Arc Blast",
-    possible_brand="Zpacks",
-    context="er nutzt ihn für lange Thru-Hikes"
-)
+# Beispiel: 5 Kandidaten aus Transcript gefunden
+# → 5x verify_gear_mention() aufrufen!
 
-# Kandidat 2
-verify_gear_mention(
-    product_name="revelation quilt",
-    possible_brand="enlightened equipment",
-    context="sein liebster Quilt für 3-Jahreszeiten"
-)
-
-# ... für JEDEN weiteren Kandidaten
+verify_gear_mention(product_name="Arc Blast", possible_brand="Zpacks", context="...")
+verify_gear_mention(product_name="burrow quilt", possible_brand="hammock gear", context="...")
+verify_gear_mention(product_name="pack", possible_brand="gossamer", context="...")
+verify_gear_mention(product_name="rain jacket", possible_brand="frogg toggs", context="...")
+verify_gear_mention(product_name="sleeping pad", possible_brand="thermarest", context="...")
 ```
 
-**SCHRITT 4: Specs recherchieren (wenn Gewicht/Preis fehlt)**
+**SCHRITT 4: research_gear_specs() wenn Specs fehlen**
+Nach erfolgreicher Verifizierung, wenn Gewicht/Preis unbekannt:
 ```python
-research_gear_specs(
-    product_name="Arc Blast",  # Verifizierter Name aus Schritt 3
-    brand="Zpacks"
-)
+research_gear_specs(product_name="Arc Blast", brand="Zpacks")
 ```
 
 **SCHRITT 5: Erst DANN speichern**
 Nur mit verifizierten Daten `save_gear_to_graph()` aufrufen!
 
 ---
-📊 **CHECKLISTE für Transcript-Extraktion:**
-- [ ] `fetch_youtube_transcript()` aufgerufen?
-- [ ] Alle Produkt-Erwähnungen gesammelt?
-- [ ] `verify_gear_mention()` für JEDEN Kandidaten aufgerufen?
-- [ ] Bei fehlenden Specs: `research_gear_specs()` aufgerufen?
-- [ ] Nur verifizierte Produkte gespeichert?
+## ✅ CHECKLISTE (alle Punkte MÜSSEN erfüllt sein!)
+
+1. [ ] `fetch_youtube_transcript()` aufgerufen?
+2. [ ] Alle Produkt-Erwähnungen gesammelt?
+3. [ ] Confidence für jeden Kandidaten bewertet?
+4. [ ] **`verify_gear_mention()` für JEDEN Kandidaten < 95% aufgerufen?**
+5. [ ] `research_gear_specs()` bei fehlenden Specs aufgerufen?
+6. [ ] Nur verifizierte Produkte gespeichert?
+
+⚠️ **STOPP-REGEL:** Speichere KEIN Produkt aus dem Transcript ohne vorherige
+Verifizierung, es sei denn du hast ≥95% Confidence (Brand + Produkt exakt bekannt)!
+
+---
 
 Das Transcript enthält oft:
 - Erfahrungsberichte und Meinungen zu Produkten
