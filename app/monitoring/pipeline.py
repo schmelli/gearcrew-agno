@@ -207,8 +207,40 @@ Der GearGraph ist ein **WISSENS-GRAPH**, nicht nur eine Produktdatenbank!
 - Kategorien sind oft schon gegliedert (Pack, Shelter, Sleep System, etc.)
 - **JEDES Produkt aus der Beschreibung = 1x `save_gear_to_graph()`**
 
-### 0b. TRANSCRIPT HOLEN
+### 0b. TRANSCRIPT HOLEN & ZWEI-PASS-VERIFIZIERUNG
 Rufe `fetch_youtube_transcript("{video['url']}")` auf, um das gesprochene Wort zu analysieren.
+
+**WICHTIG bei Videos OHNE detaillierte Beschreibung:**
+Nutze die Zwei-Pass-Verifizierung für unsichere Produkt-Erwähnungen aus dem Transcript:
+
+**Pass 1: Sammle Kandidaten**
+Höre auf Produkt-Erwähnungen wie "my Zpacks Arc Blast" oder "the Gossamer Gear pack".
+ACHTUNG: Audio-Transkription macht oft Fehler bei Markennamen!
+- "gossamer here" → Gossamer Gear
+- "u l a" → ULA (Ultra Light Adventure)
+- "enlightened equipment" → Enlightened Equipment
+
+**Pass 2a: Verifiziere mit Serper**
+Für jede unsichere Erwähnung:
+```
+verify_gear_mention(
+    product_name="revelation quilt",
+    possible_brand="enlightened equipment",
+    context="er sagte es sei sein liebster Quilt für 3-Jahreszeiten"
+)
+```
+→ Gibt korrekten Brand/Produktnamen zurück!
+
+**Pass 2b: Hole Specs mit Firecrawl (bei kniffligen Fällen)**
+Wenn Serper das Produkt findet aber keine Specs hat:
+```
+research_gear_specs(
+    product_name="Revelation Quilt",
+    brand="Enlightened Equipment"
+)
+```
+→ Gibt Gewicht, Preis, Materialien zurück!
+
 Das Transcript enthält oft:
 - Erfahrungsberichte und Meinungen zu Produkten
 - Vergleiche zwischen verschiedenen Gear-Optionen

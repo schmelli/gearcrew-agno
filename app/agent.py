@@ -75,6 +75,10 @@ from app.tools.geargraph import (
     save_temperature_range_tool,
     find_gear_for_temperature,
 )
+from app.tools.product_verifier import (
+    verify_gear_mention,
+    research_gear_specs,
+)
 
 load_dotenv()
 
@@ -1252,6 +1256,9 @@ AGENT_TOOLS = [
     import_lighterpack_list,  # Import gear lists from LighterPack URLs
     # Brand verification - MUST USE before saving unfamiliar brands!
     verify_product_brand,  # Verify brand names heard in audio before saving
+    # Two-Pass Product Verification (for transcripts without descriptions)
+    verify_gear_mention,  # Pass 2a: Verify uncertain gear mentions with Serper
+    research_gear_specs,  # Pass 2b: Get detailed specs with Firecrawl
     # GearGraph database tools - DUPLICATE CHECK FIRST!
     find_similar_gear,  # MUST call before save_gear_to_graph
     check_gear_exists,
