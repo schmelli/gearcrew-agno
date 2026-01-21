@@ -416,9 +416,13 @@ def verify_gear_mention(
     Returns:
         Verification result with correct brand/product names
     """
+    # Log the call for monitoring
+    print(f"🔍 [VERIFY_GEAR_MENTION] Verifying: {possible_brand} {product_name}")
+
     result = verify_product_with_serper(product_name, possible_brand, context)
 
     if result.get("verified"):
+        print(f"  ✅ Verified: {result.get('brand')} {result.get('product')} ({result.get('confidence', 0):.0%})")
         return f"""✅ **Product Verified**
 - Brand: {result.get('brand', 'Unknown')}
 - Product: {result.get('product', product_name)}
@@ -428,6 +432,7 @@ def verify_gear_mention(
 Use these verified names when calling `save_gear_to_graph()`."""
     else:
         error = result.get("error", "Product not found in search results")
+        print(f"  ❌ Not verified: {possible_brand} {product_name} - {error}")
         return f"""❌ **Could Not Verify**
 - Searched for: {possible_brand} {product_name}
 - Reason: {error}
@@ -454,9 +459,16 @@ def research_gear_specs(
     Returns:
         Detailed specifications for the product
     """
+    # Log the call for monitoring
+    print(f"📊 [RESEARCH_GEAR_SPECS] Researching specs for: {brand} {product_name}")
+
     specs = enrich_with_firecrawl(product_name, brand)
 
     if specs:
+        weight_str = f"{specs.get('weight_grams', '?')}g" if specs.get("weight_grams") else "?"
+        price_str = f"${specs.get('price_usd', '?')}" if specs.get("price_usd") else "?"
+        print(f"  ✅ Specs found: {weight_str}, {price_str}")
+
         output = [f"📊 **Specs for {brand} {product_name}**"]
 
         if specs.get("weight_grams"):
@@ -472,6 +484,7 @@ def research_gear_specs(
         output.append("\nUse these specs when calling `save_gear_to_graph()`.")
         return "\n".join(output)
     else:
+        print(f"  ⚠️ No specs found for {brand} {product_name}")
         return f"""⚠️ **Could not find detailed specs**
 - Product: {brand} {product_name}
 
